@@ -1,3 +1,4 @@
+<!--
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -7,41 +8,22 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-
-  <div class="namespace-service-container">
-  <div class="namespace-select">
-    <h2>네임스페이스 선택</h2>
-    <select id="namespaceSelect">
-      <option value="">네임스페이스 선택</option>
-      <option value="default">default</option>
-      <option value="dev">dev</option>
-      <option value="prod">prod</option>
-    </select>
-  </div>
-
-  <div class="service-select">
-    <h2>서비스 선택</h2>
-    <select id="serviceSelect">
-      <option value="">서비스 선택</option>
-    </select>
-  </div>
-</div>
-
-
-  <div class="controls">
-    <button id="unlock-btn">잠금 풀기</button>
-
-    <div>
-      <label for="deploy-time-select" class="label-bold">배포 시간</label>
-      <select id="deploy-time-select">
-        <option value="immediate">즉시</option>
-        <option value="5min">5분 후</option>
-        <option value="15min">15분 후</option>
-        <option value="30min">30분 후</option>
+  <div class="top-controls">
+    <div class="namespace-select">
+      <h2>네임스페이스 선택</h2>
+      <select id="namespaceSelect">
+        <option value="">네임스페이스 선택</option>
       </select>
     </div>
 
-    <div>
+    <div class="service-select">
+      <h2>서비스 선택</h2>
+      <div id="serviceCheckboxContainer"></div>
+    </div>
+
+    <button id="unlock-btn">잠금</button>
+
+    <div class="sticky-session-toggle">
       <label class="label-bold">sticky session</label>
       <label class="switch">
         <input type="checkbox" id="deploy-toggle" checked />
@@ -50,15 +32,56 @@
     </div>
   </div>
 
-  <div class="slider-container">
-    <label for="traffic-slider" class="label-bold">
-      트래픽 조정: <span id="traffic-value">50%</span>
-    </label>
-    <input type="range" id="traffic-slider" min="0" max="100" value="50" />
-  </div>
+  <div id="slider-wrapper" class="slider-wrapper"></div>
 
   <footer>
     <button id="deploy-btn" class="btn-deploy">Deploy</button>
+    <button id="rollback-btn" class="btn-rollback">Rollback</button>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+
+</html>
+-->
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>배포 트래픽 조절 UI</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="top-controls">
+    <div class="namespace-select">
+      <h2>네임스페이스 선택</h2>
+      <select id="namespaceSelect">
+        <option value="">네임스페이스 선택</option>
+      </select>
+    </div>
+
+    <div class="service-select">
+      <h2>서비스 선택</h2>
+      <div id="serviceCheckboxContainer"></div>
+    </div>
+
+    <button id="unlock-btn">잠금</button>
+
+    <!--<div class="sticky-session-toggle">
+      <label class="label-bold">sticky session</label>
+      <label class="switch">
+        <input type="checkbox" id="deploy-toggle" checked />
+        <span class="slider"></span>-->
+      </label>
+    </div>
+  </div>
+
+  <div id="slider-wrapper" class="slider-wrapper"></div>
+
+  <footer>
+    <button id="deploy-btn" class="btn-deploy" disabled>Deploy</button>
     <button id="rollback-btn" class="btn-rollback">Rollback</button>
   </footer>
 
