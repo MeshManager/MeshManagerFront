@@ -17,9 +17,11 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface Cluster {
-  id: string;
-  name: string;
-  agentConnected: boolean;
+  id: number;
+  clusterName: string;
+  prometheusUrl: string;
+  token: string;
+  agentConnected?: boolean; // 옵셔널로 설정 (백엔드에서 안 오는 경우)
 }
 
 // SidebarTrigger의 위치를 동적으로 관리하는 새로운 컴포넌트
@@ -45,19 +47,33 @@ function App() {
   const { isLoggedIn, logout } = useAuth();
   const [clusters, setClusters] = useState<Cluster[]>([]);
 
+  // 백엔드에서 클러스터 목록을 가져오는 함수
+  const fetchClusters = async () => {
+    try {
+      const response = await fetch('http://localhost:8080/api/clusters');
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      // agentConnected 필드가 없으면 false로 기본값 설정
+      const clustersWithAgent = data.map((cluster: Cluster) => ({
+        ...cluster,
+        agentConnected: cluster.agentConnected ?? false
+      }));
+      setClusters(clustersWithAgent);
+    } catch (error) {
+      console.error("Failed to fetch clusters from backend:", error);
+      // 에러 발생 시 빈 배열로 설정
+      setClusters([]);
+    }
+  };
+
   useEffect(() => {
     if (isLoggedIn) {
-      // localStorage에서 클러스터 데이터 로드
-      try {
-        const savedClusters = localStorage.getItem('clusters');
-        if (savedClusters) {
-          setClusters(JSON.parse(savedClusters));
-        }
-      } catch (error) {
-        console.error("Failed to load clusters from localStorage:", error);
-      }
+      // 백엔드에서 클러스터 데이터 로드
+      fetchClusters();
     } else {
-        setClusters([]); // 로그인 안된 상태에서는 클러스터 목록 비우기
+      setClusters([]); // 로그인 안된 상태에서는 클러스터 목록 비우기
     }
   }, [isLoggedIn]);
 
@@ -69,44 +85,38 @@ function App() {
     }
   };
 
-  const handleDeleteCluster = (clusterName: string) => {
-    // 클러스터 삭제 로직
-    alert(`클러스터 '${clusterName}' 삭제 로직 (프론트엔드)`);
-    // 실제 로직: localStorage에서 클러스터 삭제
-    try {
-      const existingClustersString = localStorage.getItem('clusters');
-      if (existingClustersString) {
-        const existingClusters: Cluster[] = JSON.parse(existingClustersString);
-        const updatedClusters = existingClusters.filter(c => c.name !== clusterName);
-        localStorage.setItem('clusters', JSON.stringify(updatedClusters));
-        setClusters(updatedClusters); // UI 업데이트
-        alert(`클러스터 '${clusterName}'가 삭제되었습니다.`);
+  const handleDeleteCluster = async (clusterId: number, clusterName: string) => {
+    if (window.confirm(`정말로 클러스터 '${clusterName}'를 삭제하시겠습니까?`)) {
+      try {
+        const response = await fetch(`http://localhost:8080/api/clusters/${clusterId}`, {
+          method: 'DELETE',
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+        }
+
+        alert(`클러스터 '${clusterName}'가 성공적으로 삭제되었습니다.`);
+        fetchClusters(); // 목록 새로고침
+      } catch (error: unknown) {
+        let errorMessage = '클러스터 삭제 중 알 수 없는 오류 발생';
+        if (error instanceof Error) {
+            errorMessage = `클러스터 삭제에 실패했습니다: ${error.message}`;
+        } else if (typeof error === 'string') {
+            errorMessage = `클러스터 삭제에 실패했습니다: ${error}`;
+        }
+        console.error('클러스터 삭제 중 오류 발생:', error);
+        alert(errorMessage);
       }
-    } catch (error) {
-      console.error("Failed to delete cluster from localStorage:", error);
-      alert("클러스터 삭제에 실패했습니다. 콘솔을 확인해주세요.");
     }
   };
 
   const handleDeleteAgent = (clusterName: string) => {
     // Agent 삭제 로직
     alert(`클러스터 '${clusterName}' Agent 삭제 로직 (프론트엔드)`);
-    // 실제 로직: localStorage에서 Agent 연결 상태 변경 (예: false로)
-    try {
-      const existingClustersString = localStorage.getItem('clusters');
-      if (existingClustersString) {
-        const existingClusters: Cluster[] = JSON.parse(existingClustersString);
-        const updatedClusters = existingClusters.map(c => 
-          c.name === clusterName ? { ...c, agentConnected: false } : c
-        );
-        localStorage.setItem('clusters', JSON.stringify(updatedClusters));
-        setClusters(updatedClusters); // UI 업데이트
-        alert(`클러스터 '${clusterName}'의 Agent 연결 상태가 '연결 안됨'으로 변경되었습니다.`);
-      }
-    } catch (error) {
-      console.error("Failed to update agent status in localStorage:", error);
-      alert("Agent 연결 상태 업데이트에 실패했습니다. 콘솔을 확인해주세요.");
-    }
+    // TODO: 백엔드 Agent 상태 업데이트 API 호출 후 목록 새로고침
+    fetchClusters();
   };
 
   const handleAuthButtonClick = () => {
@@ -159,7 +169,7 @@ function App() {
                       clusters.map((cluster) => (
                         <TableRow key={cluster.id}>
                           <TableCell className="font-medium">
-                            {cluster.name}
+                            {cluster.clusterName}
                           </TableCell>
                           <TableCell>
                             {cluster.agentConnected ? "연결됨" : "연결 안됨"}
@@ -168,7 +178,7 @@ function App() {
                             <Button
                               variant="destructive"
                               size="sm"
-                              onClick={() => handleDeleteCluster(cluster.name)}
+                              onClick={() => handleDeleteCluster(cluster.id, cluster.clusterName)}
                               className="mr-2"
                             >
                               클러스터 삭제
@@ -176,7 +186,7 @@ function App() {
                             <Button
                               variant="secondary"
                               size="sm"
-                              onClick={() => handleDeleteAgent(cluster.name)}
+                              onClick={() => handleDeleteAgent(cluster.clusterName)}
                             >
                               Agent 삭제
                             </Button>
