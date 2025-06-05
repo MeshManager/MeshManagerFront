@@ -2,6 +2,7 @@
 
 import { Home, Package, Rocket, Settings } from "lucide-react"
 import Link from "next/link";
+import { useAuth } from '@/contexts/AuthContext';
 
 import {
   Sidebar,
@@ -17,31 +18,38 @@ import {
 } from "@/components/ui/sidebar"
 
 // Menu items.
-const items = [
+const menuItems = [
   {
     title: "Home",
     url: "/",
     icon: Home,
+    authRequired: false,
   },
   {
     title: "Canary Deploy",
-    url: "#",
+    url: "/canary-deploy",
     icon: Rocket,
+    authRequired: true,
   },
   {
     title: "Dark Release",
-    url: "#",
+    url: "/dark-release",
     icon: Package,
+    authRequired: true,
   },
   {
     title: "Settings",
-    url: "#",
+    url: "/settings",
     icon: Settings,
+    authRequired: true,
   },
 ]
 
 export function AppSidebar() {
   const { state: sidebarState } = useSidebar();
+  const { isLoggedIn } = useAuth();
+
+  const filteredMenuItems = menuItems.filter(item => !item.authRequired || isLoggedIn);
 
   return (
     <Sidebar>
@@ -56,7 +64,7 @@ export function AppSidebar() {
           </div>
           <SidebarGroupContent>
             <SidebarMenu>
-              {items.map((item) => (
+              {filteredMenuItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild>
                     <Link href={item.url} passHref>
