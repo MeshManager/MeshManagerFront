@@ -1,6 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
 import { SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { Input } from "@/components/ui/input";
@@ -14,16 +16,32 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Loader2 } from "lucide-react";
+import { Loader2, Eye, EyeOff } from "lucide-react";
 
 function ClusterRegistrationPage() {
+  const router = useRouter();
+  const { isLoggedIn, logout, isLoading } = useAuth();
+
   const [clusterName, setClusterName] = useState('');
   const [prometheusUrl, setPrometheusUrl] = useState('');
   const [token, setToken] = useState('');
+  const [showToken, setShowToken] = useState(false);
   const [showCommandDialog, setShowCommandDialog] = useState(false);
   const [agentInstallCommand, setAgentInstallCommand] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [isRegistering, setIsRegistering] = useState(false);
   const [isDuplicateChecked, setIsDuplicateChecked] = useState(false);
+
+  useEffect(() => {
+    // 페이지 로드 시 토큰 자동 생성
+    const newToken = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    setToken(newToken);
+  }, []);
+
+  useEffect(() => {
+    if (!isLoading && !isLoggedIn) {
+      router.push('/login');
+    }
+  }, [isLoggedIn, isLoading, router]);
 
   function SidebarToggleButton() {
     const { state } = useSidebar();
@@ -51,15 +69,6 @@ function ClusterRegistrationPage() {
     setIsDuplicateChecked(true);
   };
 
-  const handleGenerateToken = () => {
-    if (clusterName.trim() === '' || prometheusUrl.trim() === '') {
-        alert("클러스터 이름과 프로메테우스 URL을 먼저 입력해주세요.");
-        return;
-    }
-    const newToken = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-    setToken(newToken);
-  };
-
   const handleRegisterCluster = () => {
     if (!isDuplicateChecked) {
       alert("클러스터 이름 중복 확인을 먼저 해주세요.");
@@ -70,32 +79,35 @@ function ClusterRegistrationPage() {
       return;
     }
 
-    setIsLoading(true);
+    setIsRegistering(true);
 
+    // 명령어와 팝업은 즉시 표시
     const command = `kubectl apply -f https://example.com/agent-manifest.yaml?token=${token}&cluster=${clusterName}`;
     setAgentInstallCommand(command);
-
     setShowCommandDialog(true);
 
-    const newCluster = {
-      id: Date.now().toString(),
-      name: clusterName,
-      agentConnected: false,
-    };
+    // 백엔드 처리 (현재는 localStorage 저장 및 alert) 시뮬레이션 지연
+    setTimeout(() => {
+      const newCluster = {
+        id: Date.now().toString(),
+        name: clusterName,
+        agentConnected: false,
+      };
 
-    try {
-      const existingClustersString = localStorage.getItem('clusters');
-      let existingClusters = [];
-      if (existingClustersString) {
-        existingClusters = JSON.parse(existingClustersString);
+      try {
+        const existingClustersString = localStorage.getItem('clusters');
+        let existingClusters = [];
+        if (existingClustersString) {
+          existingClusters = JSON.parse(existingClustersString);
+        }
+        const updatedClusters = [...existingClusters, newCluster];
+        localStorage.setItem('clusters', JSON.stringify(updatedClusters));
+        alert("클러스터가 등록되었습니다!");
+      } catch (error) {
+        console.error("Failed to save cluster to localStorage:", error);
+        alert("클러스터 저장에 실패했습니다. 콘솔을 확인해주세요.");
       }
-      const updatedClusters = [...existingClusters, newCluster];
-      localStorage.setItem('clusters', JSON.stringify(updatedClusters));
-      alert("클러스터가 등록되었습니다!");
-    } catch (error) {
-      console.error("Failed to save cluster to localStorage:", error);
-      alert("클러스터 저장에 실패했습니다. 콘솔을 확인해주세요.");
-    }
+    }, 2000); // 2초 지연
   };
 
   const handleCopyCommand = () => {
@@ -110,8 +122,19 @@ function ClusterRegistrationPage() {
 
   const handlePrometheusUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setPrometheusUrl(e.target.value);
-    setToken('');
   };
+
+  const handleLogout = () => {
+    logout();
+  };
+
+  if (isLoading) {
+    return null; // 또는 로딩 스피너 등을 표시할 수 있습니다.
+  }
+
+  if (!isLoggedIn) {
+    return null; // 로그인되지 않은 경우 아무것도 렌더링하지 않고 리다이렉션을 기다립니다.
+  }
 
   return (
     <div>
@@ -120,6 +143,11 @@ function ClusterRegistrationPage() {
         <SidebarToggleButton />
 
         <main className="flex-1 p-4 md:p-6">
+          <div className="flex justify-end mb-4">
+            <Button variant="outline" onClick={handleLogout}>
+              로그아웃
+            </Button>
+          </div>
           <Card className="max-w-xl mx-auto">
             <CardHeader>
               <CardTitle>클러스터 등록</CardTitle>
@@ -136,7 +164,7 @@ function ClusterRegistrationPage() {
                     placeholder="클러스터 이름을 입력하세요"
                     className="flex-1"
                   />
-                  <Button onClick={handleDuplicateCheck} variant="outline" disabled={clusterName.trim() === '' || isLoading}>
+                  <Button onClick={handleDuplicateCheck} variant="outline" disabled={clusterName.trim() === '' || isRegistering}>
                     중복확인
                   </Button>
                 </div>
@@ -157,23 +185,29 @@ function ClusterRegistrationPage() {
 
               <div>
                 <label htmlFor="token" className="block text-sm font-medium text-gray-700">Token</label>
-                <div className="mt-1 flex space-x-2">
+                <div className="mt-1 flex space-x-2 relative">
                   <Input
                     id="token"
-                    type="text"
-                    value={token}
+                    type={showToken ? "text" : "password"}
+                    value={showToken ? token : '*'.repeat(token.length)}
                     readOnly
-                    className="flex-1"
+                    className="flex-1 pr-10"
                   />
-                  <Button onClick={handleGenerateToken} variant="outline" disabled={clusterName.trim() === '' || prometheusUrl.trim() === '' || isLoading}>
-                    토큰 생성
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="absolute inset-y-0 right-0 flex items-center pr-3"
+                    onClick={() => setShowToken(!showToken)}
+                  >
+                    {showToken ? <EyeOff className="h-4 w-4 text-gray-500" /> : <Eye className="h-4 w-4 text-gray-500" />}
                   </Button>
                 </div>
               </div>
 
-              <div className="flex justify-center">
-                <Button onClick={handleRegisterCluster} disabled={isLoading || clusterName.trim() === '' || prometheusUrl.trim() === '' || token.trim() === '' || !isDuplicateChecked}>
-                  {isLoading ? (
+              <div className="flex justify-center space-x-4">
+                <Button onClick={handleRegisterCluster} disabled={isRegistering || clusterName.trim() === '' || prometheusUrl.trim() === '' || token.trim() === '' || !isDuplicateChecked}>
+                  {isRegistering ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       로딩 중...
@@ -181,6 +215,13 @@ function ClusterRegistrationPage() {
                   ) : (
                     "등록하기"
                   )}
+                </Button>
+                <Button 
+                  onClick={() => setShowCommandDialog(true)} 
+                  variant="outline"
+                  disabled={!agentInstallCommand}
+                >
+                  명령어 다시 보기
                 </Button>
               </div>
             </CardContent>

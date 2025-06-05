@@ -1,48 +1,52 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 
 interface AuthContextType {
   isLoggedIn: boolean;
-  login: () => void;
+  login: (token: string) => void;
   logout: () => void;
+  isLoading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
+export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const router = useRouter();
 
   useEffect(() => {
-    // 실제 앱에서는 JWT 토큰 등을 확인하여 로그인 상태를 유지합니다.
-    // 여기서는 간단하게 localStorage를 사용합니다.
-    const storedLoginStatus = localStorage.getItem('isLoggedIn');
-    if (storedLoginStatus === 'true') {
+    const token = localStorage.getItem('authToken');
+    if (token) {
       setIsLoggedIn(true);
     }
+    setIsLoading(false);
   }, []);
 
-  const login = () => {
+  const login = (token: string) => {
+    localStorage.setItem('authToken', token);
     setIsLoggedIn(true);
-    localStorage.setItem('isLoggedIn', 'true');
   };
 
   const logout = () => {
+    localStorage.removeItem('authToken');
     setIsLoggedIn(false);
-    localStorage.removeItem('isLoggedIn');
+    router.push('/login');
   };
 
   return (
-    <AuthContext.Provider value={{ isLoggedIn, login, logout }}>
+    <AuthContext.Provider value={{ isLoggedIn, login, logout, isLoading }}>
       {children}
     </AuthContext.Provider>
   );
-};
+}
 
-export const useAuth = () => {
+export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
-}; 
+} 
