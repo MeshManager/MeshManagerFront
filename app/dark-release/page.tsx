@@ -1,12 +1,20 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 
 function SidebarToggleButton() {
   const { state } = useSidebar();
@@ -29,6 +37,23 @@ export default function DarkReleasePage() {
   const router = useRouter();
   const { isLoggedIn, logout, isLoading } = useAuth();
 
+  const [namespace, setNamespace] = useState<string>("");
+  const [service, setService] = useState<string>("");
+  const [serviceVersion, setServiceVersion] = useState<string>("");
+  const [ipAddress, setIpAddress] = useState<string>("");
+
+  // Dummy data for demonstration
+  const availableNamespaces = ["default", "kube-system", "mesh-app"];
+  const availableServices: { [key: string]: string[] } = {
+    "mesh-app": ["frontend-service", "backend-service"],
+    "default": ["my-app"],
+  };
+  const availableVersions: { [key: string]: string[] } = {
+    "frontend-service": ["v1.0.0", "v1.0.1", "v1.1.0"],
+    "backend-service": ["v2.0.0", "v2.0.1"],
+    "my-app": ["v1.0.0"],
+  };
+
   useEffect(() => {
     if (!isLoading && !isLoggedIn) {
       router.push('/login');
@@ -37,6 +62,15 @@ export default function DarkReleasePage() {
 
   const handleLogout = () => {
     logout();
+  };
+
+  const handleStartDarkRelease = () => {
+    if (!namespace || !service || !serviceVersion || !ipAddress) {
+      alert("모든 필드를 입력해주세요.");
+      return;
+    }
+    alert(`다크 릴리즈 시작:\n네임스페이스: ${namespace}\n서비스: ${service}\n서비스 버전: ${serviceVersion}\nIP 주소: ${ipAddress}`);
+    // 여기에 실제 다크 릴리즈 로직을 추가합니다.
   };
 
   if (isLoading) {
@@ -60,13 +94,70 @@ export default function DarkReleasePage() {
             </Button>
           </div>
 
-          <Card>
+          <Card className="max-w-xl mx-auto">
             <CardHeader>
               <CardTitle>Dark Release</CardTitle>
             </CardHeader>
-            <CardContent>
-              <p>Dark Release 페이지입니다. 여기에 다크 릴리스 관련 내용을 추가하세요.</p>
-              {/* 여기에 Dark Release 기능을 위한 UI 요소를 추가할 수 있습니다. */}
+            <CardContent className="grid gap-4">
+              <div>
+                <label htmlFor="namespace" className="block text-sm font-medium text-gray-700">네임스페이스</label>
+                <Select onValueChange={setNamespace} value={namespace}>
+                  <SelectTrigger id="namespace" className="mt-1">
+                    <SelectValue placeholder="네임스페이스 선택" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableNamespaces.map((ns) => (
+                      <SelectItem key={ns} value={ns}>{ns}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <label htmlFor="service" className="block text-sm font-medium text-gray-700">서비스</label>
+                <Select onValueChange={setService} value={service}>
+                  <SelectTrigger id="service" className="mt-1" disabled={!namespace}>
+                    <SelectValue placeholder="서비스 선택" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {namespace && availableServices[namespace]?.map((svc) => (
+                      <SelectItem key={svc} value={svc}>{svc}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <label htmlFor="service-version" className="block text-sm font-medium text-gray-700">서비스 버전</label>
+                <Select onValueChange={setServiceVersion} value={serviceVersion}>
+                  <SelectTrigger id="service-version" className="mt-1" disabled={!service}>
+                    <SelectValue placeholder="서비스 버전 선택" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {service && availableVersions[service]?.map((version) => (
+                      <SelectItem key={version} value={version}>{version}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <label htmlFor="ip-address" className="block text-sm font-medium text-gray-700">IP 주소</label>
+                <Input
+                  id="ip-address"
+                  type="text"
+                  value={ipAddress}
+                  onChange={(e) => setIpAddress(e.target.value)}
+                  placeholder="예: 192.168.1.100"
+                  className="mt-1"
+                />
+              </div>
+
+              <div className="flex justify-end">
+                <Button onClick={handleStartDarkRelease} disabled={!namespace || !service || !serviceVersion || !ipAddress}>
+                  배포
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </main>

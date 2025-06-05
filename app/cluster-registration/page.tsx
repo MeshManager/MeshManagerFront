@@ -69,7 +69,7 @@ function ClusterRegistrationPage() {
     setIsDuplicateChecked(true);
   };
 
-  const handleRegisterCluster = () => {
+  const handleRegisterCluster = async () => {
     if (!isDuplicateChecked) {
       alert("클러스터 이름 중복 확인을 먼저 해주세요.");
       return;
@@ -79,40 +79,68 @@ function ClusterRegistrationPage() {
       return;
     }
 
+    // 즉시 로딩 상태로 변경
     setIsRegistering(true);
 
-    // 명령어와 팝업은 즉시 표시
+    // 명령어 생성 및 팝업을 즉시 표시
     const command = `kubectl apply -f https://example.com/agent-manifest.yaml?token=${token}&cluster=${clusterName}`;
     setAgentInstallCommand(command);
     setShowCommandDialog(true);
 
-    // 백엔드 처리 (현재는 localStorage 저장 및 alert) 시뮬레이션 지연
-    setTimeout(() => {
-      const newCluster = {
-        id: Date.now().toString(),
-        name: clusterName,
-        agentConnected: false,
-      };
+    // 백엔드 API 호출 로직
+    const clusterData = {
+        clusterName: clusterName,
+        prometheusUrl: prometheusUrl,
+        token: token
+    };
 
-      try {
-        const existingClustersString = localStorage.getItem('clusters');
-        let existingClusters = [];
-        if (existingClustersString) {
-          existingClusters = JSON.parse(existingClustersString);
+    // 백엔드 API의 기본 URL (백엔드 기본 포트 8080 가정)
+    const backendApiUrl = 'http://localhost:8080/api/clusters'; 
+
+    try {
+        const response = await fetch(backendApiUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                // 필요에 따라 인증 토큰 등 추가 헤더 포함 (예: 'Authorization': `Bearer ${yourAuthToken}`)
+            },
+            body: JSON.stringify(clusterData)
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
         }
-        const updatedClusters = [...existingClusters, newCluster];
-        localStorage.setItem('clusters', JSON.stringify(updatedClusters));
-        alert("클러스터가 등록되었습니다!");
-      } catch (error) {
-        console.error("Failed to save cluster to localStorage:", error);
-        alert("클러스터 저장에 실패했습니다. 콘솔을 확인해주세요.");
-      }
-    }, 2000); // 2초 지연
+
+        const result = await response.json();
+        console.log('클러스터 등록 성공:', result);
+        
+        // 로딩 상태는 Agent 연결까지 계속 유지
+        // Agent 연결 확인 API가 없으므로 현재는 무한 로딩 상태
+
+    } catch (error: unknown) {
+        let errorMessage = '클러스터 등록 중 알 수 없는 오류 발생';
+        if (error instanceof Error) {
+            errorMessage = `클러스터 등록에 실패했습니다: ${error.message}`;
+        } else if (typeof error === 'string') {
+            errorMessage = `클러스터 등록에 실패했습니다: ${error}`;
+        }
+        console.error('클러스터 등록 중 오류 발생:', error);
+        alert(errorMessage);
+        setIsRegistering(false); // 에러 시에만 로딩 상태 해제
+    }
   };
 
   const handleCopyCommand = () => {
     navigator.clipboard.writeText(agentInstallCommand);
     alert("명령어가 복사되었습니다!");
+  };
+
+  const handleAgentConnected = () => {
+    setIsRegistering(false);
+    setShowCommandDialog(false);
+    alert("Agent 연결이 완료되었습니다!");
+    router.push('/');
   };
 
   const handleClusterNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
