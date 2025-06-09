@@ -13,15 +13,16 @@ import {
 import { SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface Cluster {
-  id: number;
-  clusterName: string;
+  uuid: string;
+  name: string;
   prometheusUrl: string;
   token: string;
-  agentConnected?: boolean; // 옵셔널로 설정 (백엔드에서 안 오는 경우)
+  agentConnected?: boolean;
 }
 
 // SidebarTrigger의 위치를 동적으로 관리하는 새로운 컴포넌트
@@ -50,7 +51,8 @@ function App() {
   // 백엔드에서 클러스터 목록을 가져오는 함수
   const fetchClusters = async () => {
     try {
-      const response = await fetch('http://localhost:8080/api/clusters');
+      const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL || 'http://localhost:8080';
+      const response = await fetch(`${apiUrl}/api/v1/cluster`);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
@@ -85,10 +87,11 @@ function App() {
     }
   };
 
-  const handleDeleteCluster = async (clusterId: number, clusterName: string) => {
+  const handleDeleteCluster = async (clusterUuid: string, clusterName: string) => {
     if (window.confirm(`정말로 클러스터 '${clusterName}'를 삭제하시겠습니까?`)) {
       try {
-        const response = await fetch(`http://localhost:8080/api/clusters/${clusterId}`, {
+        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL || 'http://localhost:8080';
+        const response = await fetch(`${apiUrl}/api/v1/cluster/${clusterUuid}`, {
           method: 'DELETE',
         });
 
@@ -138,9 +141,12 @@ function App() {
         <main className="flex-1 p-4 md:p-6">
           {/* 로그인/로그아웃 버튼 */} 
           <div className="flex justify-end mb-4">
-            <Button variant="outline" onClick={handleAuthButtonClick}>
-              {isLoggedIn ? "로그아웃" : "로그인"}
-            </Button>
+            <div className="group relative flex items-center">
+              {isLoggedIn && <Button variant="ghost" className="mr-2 cursor-pointer">user</Button>}
+              <Button variant="outline" onClick={handleAuthButtonClick} className="absolute right-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                {isLoggedIn ? "로그아웃" : "로그인"}
+              </Button>
+            </div>
           </div>
 
           {isLoggedIn ? (
@@ -160,16 +166,18 @@ function App() {
                   </TableHeader>
                   <TableBody>
                     {clusters.length === 0 ? (
-                      <TableRow>
+                      <TableRow key="no-clusters-row">
                         <TableCell colSpan={3} className="text-center text-gray-500 py-8">
                           등록된 클러스터가 없습니다.
                         </TableCell>
                       </TableRow>
                     ) : (
                       clusters.map((cluster) => (
-                        <TableRow key={cluster.id}>
+                        <TableRow key={cluster.uuid}>
                           <TableCell className="font-medium">
-                            {cluster.clusterName}
+                            <Link href={`/cluster-detail?uuid=${cluster.uuid}`} className="text-blue-600 hover:underline">
+                              {cluster.name}
+                            </Link>
                           </TableCell>
                           <TableCell>
                             {cluster.agentConnected ? "연결됨" : "연결 안됨"}
@@ -178,7 +186,7 @@ function App() {
                             <Button
                               variant="destructive"
                               size="sm"
-                              onClick={() => handleDeleteCluster(cluster.id, cluster.clusterName)}
+                              onClick={() => handleDeleteCluster(cluster.uuid, cluster.name)}
                               className="mr-2"
                             >
                               클러스터 삭제
@@ -186,7 +194,7 @@ function App() {
                             <Button
                               variant="secondary"
                               size="sm"
-                              onClick={() => handleDeleteAgent(cluster.clusterName)}
+                              onClick={() => handleDeleteAgent(cluster.name)}
                             >
                               Agent 삭제
                             </Button>

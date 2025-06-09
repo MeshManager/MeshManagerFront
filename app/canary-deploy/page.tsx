@@ -12,6 +12,45 @@ import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Label as UiLabel } from '@/components/ui/label';
 
+interface ServiceInfo {
+  name: string;
+  versions: string[];
+}
+
+interface NamespaceInfo {
+  name: string;
+  services: ServiceInfo[];
+}
+
+interface ClusterInfo {
+  uuid: string;
+  name: string;
+  // 백엔드에서 namespaces를 직접 주지 않을 경우, 이 필드는 없을 수 있습니다.
+  // namespaces?: NamespaceInfo[]; // 제거하거나 선택적 필드로 유지
+}
+
+// MOCK DATA: 백엔드에서 실제 데이터를 제공하기 전까지 사용
+const MOCK_NAMESPACES: NamespaceInfo[] = [
+  {
+    name: 'default',
+    services: [
+      { name: 'my-service-v1', versions: ['1.0.0', '1.1.0'] },
+      { name: 'another-service', versions: ['2.0.0', '2.1.0'] },
+    ],
+  },
+  {
+    name: 'kube-system',
+    services: [{ name: 'kube-dns', versions: ['1.0.0'] }],
+  },
+  {
+    name: 'mesh-app',
+    services: [
+      { name: 'frontend-service', versions: ['v1.0.0', 'v1.0.1', 'v1.1.0'] },
+      { name: 'backend-service', versions: ['v2.0.0', 'v2.0.1'] },
+    ],
+  },
+];
+
 function SidebarToggleButton() {
   const { state } = useSidebar();
 
@@ -29,27 +68,15 @@ function SidebarToggleButton() {
   );
 }
 
-// Temporary data for demonstration
-const namespaces = [
-  { name: 'default', services: [
-    { name: 'my-service-v1', versions: ['v1.0', 'v1.1'] },
-    { name: 'another-service', versions: ['v2.0', 'v2.1'] }
-  ] },
-  { name: 'kube-system', services: [
-    { name: 'kube-dns', versions: ['1.0'] }
-  ] },
-  { name: 'test-ns', services: [
-    { name: 'test-app', versions: ['v1.0.0', 'v1.0.1', 'v1.1.0'] },
-    { name: 'test-db', versions: ['2.0'] }
-  ] },
-];
-
 export default function CanaryDeployPage() {
   const router = useRouter();
   const { isLoggedIn, logout, isLoading } = useAuth();
 
+  const [clusters, setClusters] = useState<ClusterInfo[]>([]);
+  const [selectedClusterUuid, setSelectedClusterUuid] = useState<string | null>(null);
+  const [availableNamespaces, setAvailableNamespaces] = useState<NamespaceInfo[]>([]);
   const [selectedNamespace, setSelectedNamespace] = useState<string | null>(null);
-  const [availableServices, setAvailableServices] = useState<Array<{ name: string; versions: string[]; }>>([]);
+  const [availableServices, setAvailableServices] = useState<ServiceInfo[]>([]);
   const [selectedService, setSelectedService] = useState<string | null>(null);
   const [availableVersions, setAvailableVersions] = useState<string[]>([]);
   const [originalVersion, setOriginalVersion] = useState<string | null>(null);
@@ -63,26 +90,65 @@ export default function CanaryDeployPage() {
     }
   }, [isLoggedIn, isLoading, router]);
 
+  // 클러스터 목록을 불러오는 useEffect
+  useEffect(() => {
+    const fetchClusters = async () => {
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL || 'http://localhost:8080';
+        const response = await fetch(`${apiUrl}/api/v1/cluster`);
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data: ClusterInfo[] = await response.json();
+        if (data) {
+          setClusters(data);
+          // if (data.length > 0) {
+          //   setSelectedClusterUuid(data[0].uuid); // 첫 번째 클러스터 자동 선택
+          // }
+        } else {
+          setClusters([]);
+        }
+      } catch (error) {
+        console.error("Failed to fetch clusters:", error);
+        setClusters([]);
+      }
+    };
+
+    if (isLoggedIn) {
+      fetchClusters();
+    }
+  }, [isLoggedIn]);
+
+  // 선택된 클러스터에 따라 네임스페이스 업데이트 (현재는 MOCK 데이터 사용)
+  useEffect(() => {
+    // 실제 백엔드에서 클러스터별 네임스페이스를 제공할 경우, 여기 로직을 업데이트해야 합니다.
+    setAvailableNamespaces(MOCK_NAMESPACES); // 모든 클러스터에 동일한 MOCK 네임스페이스 적용
+    setSelectedNamespace(null); // 클러스터 변경 시 네임스페이스 초기화
+    setSelectedService(null);
+    setOriginalVersion(null);
+    setCanaryVersion(null);
+  }, [selectedClusterUuid]); // 'clusters' 의존성을 제거 (mock data 사용 시 불필요)
+
+  // 선택된 네임스페이스에 따라 서비스 업데이트
   useEffect(() => {
     if (selectedNamespace) {
-      const ns = namespaces.find(n => n.name === selectedNamespace);
+      const ns = availableNamespaces.find(n => n.name === selectedNamespace);
       setAvailableServices(ns ? ns.services : []);
-      setSelectedService(null); // Reset service when namespace changes
+      setSelectedService(null); // 서비스 변경 시 초기화
       setOriginalVersion(null);
       setCanaryVersion(null);
     } else {
       setAvailableServices([]);
       setSelectedService(null);
-      setOriginalVersion(null);
-      setCanaryVersion(null);
     }
-  }, [selectedNamespace]);
+  }, [selectedNamespace, availableNamespaces]);
 
+  // 선택된 서비스에 따라 버전 업데이트
   useEffect(() => {
     if (selectedService) {
       const service = availableServices.find(s => s.name === selectedService);
       setAvailableVersions(service ? service.versions : []);
-      setOriginalVersion(null); // Reset versions when service changes
+      setOriginalVersion(null); // 버전 변경 시 초기화
       setCanaryVersion(null);
     } else {
       setAvailableVersions([]);
@@ -96,8 +162,8 @@ export default function CanaryDeployPage() {
   };
 
   const handleDeploy = () => {
-    if (selectedNamespace && selectedService && originalVersion && canaryVersion && canaryRatio[0] !== undefined) {
-      alert(`Deploying Canary:\nNamespace: ${selectedNamespace}\nService: ${selectedService}\nOriginal Version: ${originalVersion}\nCanary Version: ${canaryVersion}\nRatio: ${canaryRatio[0]}%\nSticky Session: ${stickySession ? 'On' : 'Off'}`);
+    if (selectedClusterUuid && selectedNamespace && selectedService && originalVersion && canaryVersion && canaryRatio[0] !== undefined) {
+      alert(`Deploying Canary:\nCluster UUID: ${selectedClusterUuid}\nNamespace: ${selectedNamespace}\nService: ${selectedService}\nOriginal Version: ${originalVersion}\nCanary Version: ${canaryVersion}\nRatio: ${canaryRatio[0]}%\nSticky Session: ${stickySession ? 'On' : 'Off'}`);
       // 여기에 실제 배포 로직을 추가합니다.
     } else {
       alert('모든 필드를 선택해주세요.');
@@ -105,11 +171,11 @@ export default function CanaryDeployPage() {
   };
 
   const handleRollback = () => {
-    if (selectedNamespace && selectedService) {
-      alert(`Rolling back:\nNamespace: ${selectedNamespace}\nService: ${selectedService}`);
+    if (selectedClusterUuid && selectedNamespace && selectedService) {
+      alert(`Rolling back:\nCluster UUID: ${selectedClusterUuid}\nNamespace: ${selectedNamespace}\nService: ${selectedService}`);
       // 여기에 실제 롤백 로직을 추가합니다.
     } else {
-      alert('네임스페이스와 서비스를 선택해주세요.');
+      alert('클러스터, 네임스페이스, 서비스를 선택해주세요.');
     }
   };
 
@@ -129,9 +195,12 @@ export default function CanaryDeployPage() {
 
         <main className="flex-1 p-4 md:p-6">
           <div className="flex justify-end mb-4">
-            <Button variant="outline" onClick={handleLogout}>
-              로그아웃
-            </Button>
+            <div className="group relative flex items-center">
+              <Button variant="ghost" className="mr-2 cursor-pointer">user</Button>
+              <Button variant="outline" onClick={handleLogout} className="absolute right-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                로그아웃
+              </Button>
+            </div>
           </div>
 
           <Card>
@@ -141,28 +210,28 @@ export default function CanaryDeployPage() {
             <CardContent className="grid gap-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <UiLabel htmlFor="namespace">네임스페이스</UiLabel>
-                  <Select onValueChange={setSelectedNamespace} value={selectedNamespace || ''}>
-                    <SelectTrigger id="namespace">
-                      <SelectValue placeholder="네임스페이스 선택" />
+                  <UiLabel htmlFor="cluster">클러스터</UiLabel>
+                  <Select onValueChange={setSelectedClusterUuid} value={selectedClusterUuid || ''}>
+                    <SelectTrigger id="cluster">
+                      <SelectValue placeholder="클러스터 선택" />
                     </SelectTrigger>
                     <SelectContent>
-                      {namespaces.map(ns => (
-                        <SelectItem key={ns.name} value={ns.name}>{ns.name}</SelectItem>
+                      {(clusters || []).map(cluster => (
+                        <SelectItem key={cluster.uuid} value={cluster.uuid}>{cluster.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
 
                 <div>
-                  <UiLabel htmlFor="service">서비스</UiLabel>
-                  <Select onValueChange={setSelectedService} value={selectedService || ''} disabled={!selectedNamespace}>
-                    <SelectTrigger id="service">
-                      <SelectValue placeholder="서비스 선택" />
+                  <UiLabel htmlFor="namespace">네임스페이스</UiLabel>
+                  <Select onValueChange={setSelectedNamespace} value={selectedNamespace || ''} disabled={!selectedClusterUuid}>
+                    <SelectTrigger id="namespace">
+                      <SelectValue placeholder="네임스페이스 선택" />
                     </SelectTrigger>
                     <SelectContent>
-                      {availableServices.map(svc => (
-                        <SelectItem key={svc.name} value={svc.name}>{svc.name}</SelectItem>
+                      {(availableNamespaces || []).map(ns => (
+                        <SelectItem key={ns.name} value={ns.name}>{ns.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -171,37 +240,32 @@ export default function CanaryDeployPage() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
+                  <UiLabel htmlFor="service">서비스</UiLabel>
+                  <Select onValueChange={setSelectedService} value={selectedService || ''} disabled={!selectedNamespace}>
+                    <SelectTrigger id="service">
+                      <SelectValue placeholder="서비스 선택" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(availableServices || []).map(svc => (
+                        <SelectItem key={svc.name} value={svc.name}>{svc.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
                   <UiLabel htmlFor="original-version">카나리 보낼 버전</UiLabel>
                   <Select onValueChange={setOriginalVersion} value={originalVersion || ''} disabled={!selectedService}>
                     <SelectTrigger id="original-version">
                       <SelectValue placeholder="버전 선택" />
                     </SelectTrigger>
                     <SelectContent>
-                      {availableVersions
+                      {(availableVersions || [])
+                        .filter(version => version !== canaryVersion) // 카나리 받을 버전과 겹치지 않게 필터링
                         .map(version => (
                           <SelectItem 
                             key={version} 
                             value={version} 
-                            disabled={version === canaryVersion}
-                          >{version}</SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <UiLabel htmlFor="canary-version">카나리 받을 버전</UiLabel>
-                  <Select onValueChange={setCanaryVersion} value={canaryVersion || ''} disabled={!selectedService}>
-                    <SelectTrigger id="canary-version">
-                      <SelectValue placeholder="버전 선택" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availableVersions
-                        .map(version => (
-                          <SelectItem 
-                            key={version} 
-                            value={version} 
-                            disabled={version === originalVersion}
                           >{version}</SelectItem>
                         ))}
                     </SelectContent>
@@ -209,17 +273,38 @@ export default function CanaryDeployPage() {
                 </div>
               </div>
 
-              <div>
-                <UiLabel htmlFor="canary-ratio">카나리 트래픽 비율: {canaryRatio[0]}%</UiLabel>
-                <Slider
-                  id="canary-ratio"
-                  min={0}
-                  max={100}
-                  step={5}
-                  value={canaryRatio}
-                  onValueChange={setCanaryRatio}
-                  className="mt-2"
-                />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <UiLabel htmlFor="canary-version">카나리 받을 버전</UiLabel>
+                  <Select onValueChange={setCanaryVersion} value={canaryVersion || ''} disabled={!selectedService || !originalVersion}>
+                    <SelectTrigger id="canary-version">
+                      <SelectValue placeholder="버전 선택" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(availableVersions || [])
+                        .filter(version => version !== originalVersion) // 기존 버전과 겹치지 않게 필터링
+                        .map(version => (
+                          <SelectItem 
+                            key={version} 
+                            value={version} 
+                          >{version}</SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <UiLabel htmlFor="canary-ratio">카나리 트래픽 비율: {canaryRatio[0]}%</UiLabel>
+                  <Slider
+                    id="canary-ratio"
+                    min={0}
+                    max={100}
+                    step={5}
+                    value={canaryRatio}
+                    onValueChange={setCanaryRatio}
+                    className="w-[60%]"
+                  />
+                </div>
               </div>
 
               <div className="flex items-center space-x-2">
@@ -228,15 +313,15 @@ export default function CanaryDeployPage() {
                   checked={stickySession}
                   onCheckedChange={setStickySession}
                 />
-                <UiLabel htmlFor="sticky-session">Sticky Session</UiLabel>
+                <UiLabel htmlFor="sticky-session">Sticky Session 활성화</UiLabel>
               </div>
 
-              <div className="flex gap-4 mt-4">
-                <Button onClick={handleDeploy} disabled={!selectedNamespace || !selectedService || !originalVersion || !canaryVersion || canaryRatio[0] === undefined}>
-                  배포
-                </Button>
-                <Button onClick={handleRollback} variant="destructive" disabled={!selectedNamespace || !selectedService}>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={handleRollback} disabled={!selectedClusterUuid || !selectedNamespace || !selectedService}>
                   롤백
+                </Button>
+                <Button onClick={handleDeploy} disabled={!selectedClusterUuid || !selectedNamespace || !selectedService || !originalVersion || !canaryVersion || canaryRatio[0] === undefined}>
+                  배포
                 </Button>
               </div>
             </CardContent>

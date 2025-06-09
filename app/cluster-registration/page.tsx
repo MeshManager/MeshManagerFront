@@ -60,15 +60,41 @@ function ClusterRegistrationPage() {
     );
   }
 
-  const handleDuplicateCheck = () => {
+  const handleDuplicateCheck = async () => {
     if (clusterName.trim() === '') {
       alert("클러스터 이름을 입력해주세요.");
       return;
     }
-    alert(`'${clusterName}' 중복 확인! (시뮬레이션: 사용 가능)`);
-    setIsDuplicateChecked(true);
+  
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL || 'http://localhost:8080';
+      const response = await fetch(`${apiUrl}/api/v1/cluster/check-duplicate/${encodeURIComponent(clusterName)}`);
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+      }
+      const isDuplicate = await response.json();
+  
+      if (isDuplicate) {
+        alert(`'${clusterName}'은(는) 이미 사용 중인 클러스터 이름입니다.`);
+        setIsDuplicateChecked(false);
+      } else {
+        alert(`'${clusterName}'은(는) 사용 가능한 클러스터 이름입니다.`);
+        setIsDuplicateChecked(true);
+      }
+    } catch (error: unknown) {
+      let errorMessage = '클러스터 이름 중복 확인 중 오류 발생';
+      if (error instanceof Error) {
+        errorMessage = `중복 확인에 실패했습니다: ${error.message}`;
+      } else if (typeof error === 'string') {
+        errorMessage = `중복 확인에 실패했습니다: ${error}`;
+      }
+      console.error('클러스터 이름 중복 확인 중 오류 발생:', error);
+      alert(errorMessage);
+      setIsDuplicateChecked(false); // 에러 시 중복 확인 상태 해제
+    }
   };
-
+  
   const handleRegisterCluster = async () => {
     if (!isDuplicateChecked) {
       alert("클러스터 이름 중복 확인을 먼저 해주세요.");
@@ -78,58 +104,70 @@ function ClusterRegistrationPage() {
       alert("모든 필드를 입력해주세요.");
       return;
     }
-
-    // 즉시 로딩 상태로 변경
+  
     setIsRegistering(true);
-
-    // 명령어 생성 및 팝업을 즉시 표시
+  
     const command = `kubectl apply -f https://example.com/agent-manifest.yaml?token=${token}&cluster=${clusterName}`;
     setAgentInstallCommand(command);
     setShowCommandDialog(true);
-
-    // 백엔드 API 호출 로직
+  
     const clusterData = {
-        clusterName: clusterName,
-        prometheusUrl: prometheusUrl,
-        token: token
+      name: clusterName,
+      prometheusUrl: prometheusUrl,
+      token: token
     };
+  
+    const backendApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL || 'http://localhost:8080';
+    const fullApiUrl = `${backendApiUrl}/api/v1/cluster`;
+  
+          try {
+        const response = await fetch(fullApiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(clusterData)
+      });
+  
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+      }
+  
+      const result = await response.json();
+      console.log('클러스터 등록 성공:', result);
+      
+      // Agent 설치 명령어 형식 변경: YAML 파일 생성 및 kubectl apply
+      const agentCommand = `cat <<EOF > agent-${clusterName}.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mesh-manager-agent-config-${clusterName}
+  namespace: default
+data:
+  CLUSTER_ID: "${result.uuid}"
+  CLUSTER_NAME: "${clusterName}"
+  AGENT_TOKEN: "${token}"
+  PROMETHEUS_URL: "${prometheusUrl}"
+EOF
+kubectl apply -f agent-${clusterName}.yaml`;
 
-    // 백엔드 API의 기본 URL (백엔드 기본 포트 8080 가정)
-    const backendApiUrl = 'http://localhost:8080/api/clusters'; 
-
-    try {
-        const response = await fetch(backendApiUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                // 필요에 따라 인증 토큰 등 추가 헤더 포함 (예: 'Authorization': `Bearer ${yourAuthToken}`)
-            },
-            body: JSON.stringify(clusterData)
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
-        }
-
-        const result = await response.json();
-        console.log('클러스터 등록 성공:', result);
-        
-        // 로딩 상태는 Agent 연결까지 계속 유지
-        // Agent 연결 확인 API가 없으므로 현재는 무한 로딩 상태
+      setAgentInstallCommand(agentCommand);
+      setShowCommandDialog(true);
 
     } catch (error: unknown) {
-        let errorMessage = '클러스터 등록 중 알 수 없는 오류 발생';
-        if (error instanceof Error) {
-            errorMessage = `클러스터 등록에 실패했습니다: ${error.message}`;
-        } else if (typeof error === 'string') {
-            errorMessage = `클러스터 등록에 실패했습니다: ${error}`;
-        }
-        console.error('클러스터 등록 중 오류 발생:', error);
-        alert(errorMessage);
-        setIsRegistering(false); // 에러 시에만 로딩 상태 해제
+      let errorMessage = '클러스터 등록 중 알 수 없는 오류 발생';
+      if (error instanceof Error) {
+        errorMessage = `클러스터 등록에 실패했습니다: ${error.message}`;
+      } else if (typeof error === 'string') {
+        errorMessage = `클러스터 등록에 실패했습니다: ${error}`;
+      }
+      console.error('클러스터 등록 중 오류 발생:', error);
+      alert(errorMessage);
+      setIsRegistering(false);
     }
   };
+  
 
   const handleCopyCommand = () => {
     navigator.clipboard.writeText(agentInstallCommand);
@@ -172,9 +210,12 @@ function ClusterRegistrationPage() {
 
         <main className="flex-1 p-4 md:p-6">
           <div className="flex justify-end mb-4">
-            <Button variant="outline" onClick={handleLogout}>
-              로그아웃
-            </Button>
+            <div className="group relative flex items-center">
+              <Button variant="ghost" className="mr-2 cursor-pointer">user</Button>
+              <Button variant="outline" onClick={handleLogout} className="absolute right-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                로그아웃
+              </Button>
+            </div>
           </div>
           <Card className="max-w-xl mx-auto">
             <CardHeader>
@@ -278,6 +319,9 @@ function ClusterRegistrationPage() {
                 <Button type="button" onClick={handleCopyCommand}>
                   명령어 복사
                 </Button>
+                <Button type="button" onClick={handleAgentConnected}>
+                  Agent 연결 완료
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -288,3 +332,4 @@ function ClusterRegistrationPage() {
 }
 
 export default ClusterRegistrationPage;
+
