@@ -55,9 +55,12 @@ export default function SettingsPage() {
 
         <main className="flex-1 p-4 md:p-6">
           <div className="flex justify-end mb-4">
-            <Button variant="outline" onClick={handleLogout}>
-              로그아웃
-            </Button>
+            <div className="group relative flex items-center">
+              <Button variant="ghost" className="mr-2 cursor-pointer">user</Button>
+              <Button variant="outline" onClick={handleLogout} className="absolute right-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                로그아웃
+              </Button>
+            </div>
           </div>
 
           <Card>
