@@ -67,7 +67,7 @@ function ClusterRegistrationPage() {
     }
   
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL || 'http://localhost:8080';
+      const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CLUSTER || 'http://localhost:8082';
       const response = await fetch(`${apiUrl}/api/v1/cluster/check-duplicate/${encodeURIComponent(clusterName)}`);
       if (!response.ok) {
         const errorText = await response.text();
@@ -117,7 +117,7 @@ function ClusterRegistrationPage() {
       token: token
     };
   
-    const backendApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL || 'http://localhost:8080';
+    const backendApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CLUSTER || 'http://localhost:8082';
     const fullApiUrl = `${backendApiUrl}/api/v1/cluster`;
   
           try {
@@ -137,20 +137,8 @@ function ClusterRegistrationPage() {
       const result = await response.json();
       console.log('클러스터 등록 성공:', result);
       
-      // Agent 설치 명령어 형식 변경: YAML 파일 생성 및 kubectl apply
-      const agentCommand = `cat <<EOF > agent-${clusterName}.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: mesh-manager-agent-config-${clusterName}
-  namespace: default
-data:
-  CLUSTER_ID: "${result.uuid}"
-  CLUSTER_NAME: "${clusterName}"
-  AGENT_TOKEN: "${token}"
-  PROMETHEUS_URL: "${prometheusUrl}"
-EOF
-kubectl apply -f agent-${clusterName}.yaml`;
+      // Agent 설치 명령어 형식 변경: make deploy 명령
+      const agentCommand = `make deploy IMG=public.ecr.aws/j8f1l6o6/mesh-agent:v1 UUID="${result.uuid}" AGENT_NAME="${clusterName}" AGENT_URL="http://192.168.0.141:8081/" DESIRED_STATE_URL="http://192.168.0.137:8080/yaml"`;
 
       setAgentInstallCommand(agentCommand);
       setShowCommandDialog(true);

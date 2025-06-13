@@ -17,11 +17,9 @@ import Link from 'next/link';
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 
-interface Cluster {
+interface ClusterResponse {
   uuid: string;
   name: string;
-  prometheusUrl: string;
-  token: string;
   agentConnected?: boolean;
 }
 
@@ -46,23 +44,32 @@ function SidebarToggleButton() {
 function App() {
   const router = useRouter();
   const { isLoggedIn, logout } = useAuth();
-  const [clusters, setClusters] = useState<Cluster[]>([]);
+  const [clusters, setClusters] = useState<ClusterResponse[]>([]);
 
   // 백엔드에서 클러스터 목록을 가져오는 함수
   const fetchClusters = async () => {
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL || 'http://localhost:8080';
-      const response = await fetch(`${apiUrl}/api/v1/cluster`);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      // cluster-service에서 클러스터 목록을 가져옴
+      const clusterApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CLUSTER || 'http://localhost:8082';
+      const clusterResponse = await fetch(`${clusterApiUrl}/api/v1/cluster`);
+      if (!clusterResponse.ok) {
+        throw new Error(`HTTP error! status: ${clusterResponse.status}, message: ${await clusterResponse.text()}`);
       }
-      const data = await response.json();
-      // agentConnected 필드가 없으면 false로 기본값 설정
-      const clustersWithAgent = data.map((cluster: Cluster) => ({
+      const clusterResult = await clusterResponse.json();
+      const clusterList = clusterResult.data || [];
+
+      // agent-service에서 연결된 agent 이름들을 가져옴
+      const agentApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_AGENT || 'http://localhost:8081';
+      const agentResponse = await fetch(`${agentApiUrl}/api/v1/agent/connected`);
+      const connectedAgents = agentResponse.ok ? await agentResponse.json() : [];
+
+      // 클러스터 이름과 Redis 키(agent 이름) 매칭
+      const clustersWithStatus = clusterList.map((cluster: ClusterResponse) => ({
         ...cluster,
-        agentConnected: cluster.agentConnected ?? false
+        agentConnected: connectedAgents.includes(cluster.name)
       }));
-      setClusters(clustersWithAgent);
+
+      setClusters(clustersWithStatus);
     } catch (error) {
       console.error("Failed to fetch clusters from backend:", error);
       // 에러 발생 시 빈 배열로 설정
@@ -87,11 +94,11 @@ function App() {
     }
   };
 
-  const handleDeleteCluster = async (clusterUuid: string, clusterName: string) => {
+  const handleDeleteCluster = async (clusterId: string, clusterName: string) => {
     if (window.confirm(`정말로 클러스터 '${clusterName}'를 삭제하시겠습니까?`)) {
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL || 'http://localhost:8080';
-        const response = await fetch(`${apiUrl}/api/v1/cluster/${clusterUuid}`, {
+        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CLUSTER || 'http://localhost:8082';
+        const response = await fetch(`${apiUrl}/api/v1/cluster/${clusterId}`, {
           method: 'DELETE',
         });
 
@@ -175,7 +182,7 @@ function App() {
                       clusters.map((cluster) => (
                         <TableRow key={cluster.uuid}>
                           <TableCell className="font-medium">
-                            <Link href={`/cluster-detail?uuid=${cluster.uuid}`} className="text-blue-600 hover:underline">
+                            <Link href={`/cluster-detail?clusterId=${cluster.uuid}`} className="text-blue-600 hover:underline">
                               {cluster.name}
                             </Link>
                           </TableCell>

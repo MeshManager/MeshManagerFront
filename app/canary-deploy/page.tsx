@@ -99,11 +99,16 @@ export default function CanaryDeployPage() {
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
-        const data: ClusterInfo[] = await response.json();
-        if (data) {
-          setClusters(data);
-          // if (data.length > 0) {
-          //   setSelectedClusterUuid(data[0].uuid); // 첫 번째 클러스터 자동 선택
+        const result = await response.json(); // DataResponse 객체 전체를 받음
+        if (result && result.data) { // result.data가 존재하는지 확인
+          // agentConnected 필드가 없으면 false로 기본값 설정 (필요 시)
+          const clustersWithAgent = result.data.map((cluster: any) => ({
+            ...cluster,
+            agentConnected: cluster.agentConnected ?? false // app/page.tsx 와 일관되게 처리
+          }));
+          setClusters(clustersWithAgent);
+          // if (clustersWithAgent.length > 0) {
+          //   setSelectedClusterUuid(clustersWithAgent[0].uuid); // 첫 번째 클러스터 자동 선택
           // }
         } else {
           setClusters([]);
