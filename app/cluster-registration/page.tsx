@@ -138,7 +138,7 @@ function ClusterRegistrationPage() {
       console.log('클러스터 등록 성공:', result);
       
       // Agent 설치 명령어 형식 변경: make deploy 명령
-      const agentCommand = `make deploy IMG=public.ecr.aws/j8f1l6o6/mesh-agent:v1 UUID="${result.uuid}" AGENT_NAME="${clusterName}" AGENT_URL="http://192.168.0.141:8081/" DESIRED_STATE_URL="http://192.168.0.137:8080/yaml"`;
+      const agentCommand = `make deploy IMG=public.ecr.aws/j8f1l6o6/mesh-agent:v1 UUID="${result.uuid}" AGENT_NAME="${clusterName}" AGENT_URL="http://192.168.0.141:8081/api/v1/agent" DESIRED_STATE_URL="http://192.168.0.137:8080/yaml"`;
 
       setAgentInstallCommand(agentCommand);
       setShowCommandDialog(true);
@@ -306,9 +306,6 @@ function ClusterRegistrationPage() {
               <DialogFooter>
                 <Button type="button" onClick={handleCopyCommand}>
                   명령어 복사
-                </Button>
-                <Button type="button" onClick={handleAgentConnected}>
-                  Agent 연결 완료
                 </Button>
               </DialogFooter>
             </DialogContent>

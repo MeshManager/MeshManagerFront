@@ -94,7 +94,12 @@ function App() {
     }
   };
 
-  const handleDeleteCluster = async (clusterId: string, clusterName: string) => {
+  const handleDeleteCluster = async (clusterId: string, clusterName: string, agentConnected: boolean) => {
+    if (agentConnected) {
+      alert(`클러스터 '${clusterName}'에 연결된 Agent가 있습니다. Agent를 먼저 삭제해주세요.`);
+      return;
+    }
+
     if (window.confirm(`정말로 클러스터 '${clusterName}'를 삭제하시겠습니까?`)) {
       try {
         const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CLUSTER || 'http://localhost:8082';
@@ -193,8 +198,9 @@ function App() {
                             <Button
                               variant="destructive"
                               size="sm"
-                              onClick={() => handleDeleteCluster(cluster.uuid, cluster.name)}
+                              onClick={() => handleDeleteCluster(cluster.uuid, cluster.name, cluster.agentConnected || false)}
                               className="mr-2"
+                              disabled={cluster.agentConnected}
                             >
                               클러스터 삭제
                             </Button>

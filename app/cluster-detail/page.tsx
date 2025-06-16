@@ -34,7 +34,7 @@ interface ClusterDetail {
 export default function ClusterDetailPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const uuid = searchParams.get('uuid');
+  const uuid = searchParams.get('clusterId');
   
   const [clusterDetail, setClusterDetail] = useState<ClusterDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -50,7 +50,7 @@ export default function ClusterDetailPage() {
     const fetchClusterDetails = async () => {
       try {
         setLoading(true);
-        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL || 'http://localhost:8080';
+        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CLUSTER || 'http://localhost:8082';
         const response = await fetch(`${apiUrl}/api/v1/cluster/${uuid}/details`);
         
         if (!response.ok) {
