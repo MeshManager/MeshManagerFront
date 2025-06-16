@@ -74,7 +74,7 @@ export default function DarkReleasePage() {
   useEffect(() => {
     const fetchClusters = async () => {
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL || 'http://localhost:8080';
+        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CLUSTER || 'http://localhost:8082';
         const response = await fetch(`${apiUrl}/api/v1/cluster`);
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
