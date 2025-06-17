@@ -6,6 +6,13 @@ import Link from 'next/link';
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface ContainerInfo {
   name: string;
@@ -17,6 +24,25 @@ interface ServiceInfo {
   clusterIp: string;
   type: string;
   selector: Record<string, string>;
+}
+
+interface NamespaceListResponse {
+  namespaces: string[];
+}
+
+interface ServiceNameListResponse {
+  serviceNames: string[];
+}
+
+interface DeploymentInfo {
+  name: string;
+  containers: ContainerInfo[];
+  podLabels: Record<string, string>;
+  replicas: number;
+}
+
+interface DeploymentListResponse {
+  data: DeploymentInfo[];
 }
 
 interface ClusterDetail {
@@ -39,6 +65,10 @@ export default function ClusterDetailPage() {
   const [clusterDetail, setClusterDetail] = useState<ClusterDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [namespaces, setNamespaces] = useState<string[]>([]);
+  const [services, setServices] = useState<string[]>([]);
+  const [selectedNamespace, setSelectedNamespace] = useState<string>('');
+  const [selectedService, setSelectedService] = useState<string>('');
 
   useEffect(() => {
     if (!uuid) {
@@ -73,6 +103,78 @@ export default function ClusterDetailPage() {
 
     fetchClusterDetails();
   }, [uuid]);
+
+  useEffect(() => {
+    const fetchNamespaces = async () => {
+      if (!uuid) return;
+      
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CLUSTER || 'http://localhost:8082';
+        const response = await fetch(`${apiUrl}/api/v1/cluster/namespaces?clusterId=${uuid}`);
+        if (!response.ok) throw new Error('네임스페이스 목록을 불러오는데 실패했습니다.');
+        
+        const data: NamespaceListResponse = await response.json();
+        setNamespaces(data.namespaces);
+        if (data.namespaces.length > 0) {
+          setSelectedNamespace(data.namespaces[0]);
+        }
+      } catch (error) {
+        console.error('네임스페이스 목록을 불러오는데 실패했습니다:', error);
+      }
+    };
+
+    fetchNamespaces();
+  }, [uuid]);
+
+  useEffect(() => {
+    const fetchServices = async () => {
+      if (!uuid || !selectedNamespace) return;
+      
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CLUSTER || 'http://localhost:8082';
+        const response = await fetch(`${apiUrl}/api/v1/cluster/services?clusterId=${uuid}&namespace=${selectedNamespace}`);
+        if (!response.ok) throw new Error('서비스 목록을 불러오는데 실패했습니다.');
+        
+        const data: ServiceNameListResponse = await response.json();
+        setServices(data.serviceNames);
+        if (data.serviceNames.length > 0) {
+          setSelectedService(data.serviceNames[0]);
+        }
+      } catch (error) {
+        console.error('서비스 목록을 불러오는데 실패했습니다:', error);
+      }
+    };
+
+    fetchServices();
+  }, [uuid, selectedNamespace]);
+
+  useEffect(() => {
+    const fetchResources = async () => {
+      if (!uuid || !selectedNamespace || !selectedService) return;
+      
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CLUSTER || 'http://localhost:8082';
+        const response = await fetch(`${apiUrl}/api/v1/cluster/deployments?clusterId=${uuid}&namespace=${selectedNamespace}&serviceName=${selectedService}`);
+        if (!response.ok) throw new Error('디플로이먼트 정보를 불러오는데 실패했습니다.');
+        
+        const data: DeploymentListResponse = await response.json();
+        
+        if (data.data.length > 0) {
+          const deployment = data.data[0];
+          setClusterDetail(prev => prev ? {
+            ...prev,
+            containers: deployment.containers,
+            podLabels: deployment.podLabels,
+            replicaCount: deployment.replicas
+          } : null);
+        }
+      } catch (error) {
+        console.error('디플로이먼트 정보를 불러오는데 실패했습니다:', error);
+      }
+    };
+
+    fetchResources();
+  }, [uuid, selectedNamespace, selectedService]);
 
   if (loading) {
     return (
@@ -111,22 +213,55 @@ export default function ClusterDetailPage() {
     <div className="flex items-center justify-center min-h-screen bg-gray-100 p-4">
       <Card className="w-full max-w-2xl">
         <CardHeader>
-          <CardTitle>클러스터 상세 정보: {clusterDetail.name}</CardTitle>
+          <CardTitle>클러스터: {clusterDetail.name}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <p><strong>UUID:</strong> {clusterDetail.uuid}</p>
-          <p><strong>클러스터 이름:</strong> {clusterDetail.name}</p>
-          <p><strong>Prometheus URL:</strong> {clusterDetail.prometheusUrl}</p>
+          <p><strong>Name:</strong> {clusterDetail.name}</p>
           <p><strong>Token:</strong> {clusterDetail.token}</p>
-          {clusterDetail.namespace && <p><strong>네임스페이스:</strong> {clusterDetail.namespace}</p>}
-          {clusterDetail.replicaCount && <p><strong>Replica 수:</strong> {clusterDetail.replicaCount}</p>}
+          <p><strong>Prometheus URL:</strong> {clusterDetail.prometheusUrl}</p>
+          <hr style={{ margin: '30px 0' }}/>
+          <div className="flex gap-4 items-end">
+            <div className="flex-1">
+              <label className="block text-sm font-medium mb-2">네임스페이스</label>
+              <Select value={selectedNamespace} onValueChange={setSelectedNamespace}>
+                <SelectTrigger>
+                  <SelectValue placeholder="네임스페이스를 선택하세요" />
+                </SelectTrigger>
+                <SelectContent>
+                  {namespaces.map((namespace) => (
+                    <SelectItem key={namespace} value={namespace}>
+                      {namespace}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
+            <div className="flex-1">
+              <label className="block text-sm font-medium mb-2">서비스</label>
+              <Select value={selectedService} onValueChange={setSelectedService}>
+                <SelectTrigger>
+                  <SelectValue placeholder="서비스를 선택하세요" />
+                </SelectTrigger>
+                <SelectContent>
+                  {services.map((service) => (
+                    <SelectItem key={service} value={service}>
+                      {service}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
           {clusterDetail.containers && clusterDetail.containers.length > 0 && (
             <div>
               <h3 className="text-lg font-semibold mt-4 mb-2">컨테이너 정보</h3>
               <ul className="list-disc pl-5 space-y-1">
                 {clusterDetail.containers.map((container, index) => (
-                  <li key={index}>이름: {container.name}, 이미지: {container.image}</li>
+                  <>
+                    <li key={index}>이름: {container.name}</li>
+                    <li>이미지: {container.image}</li>
+                  </>
                 ))}
               </ul>
             </div>
@@ -158,7 +293,7 @@ export default function ClusterDetailPage() {
           )}
 
           <Link href="/" passHref>
-            <Button>목록으로 돌아가기</Button>
+            <Button style={{ marginTop: '50px' }}>목록으로 돌아가기</Button>
           </Link>
         </CardContent>
       </Card>
