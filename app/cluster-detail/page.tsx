@@ -258,10 +258,10 @@ export default function ClusterDetailPage() {
               <h3 className="text-lg font-semibold mt-4 mb-2">컨테이너 정보</h3>
               <ul className="list-disc pl-5 space-y-1">
                 {clusterDetail.containers.map((container, index) => (
-                  <>
-                    <li key={index}>이름: {container.name}</li>
+                  <React.Fragment key={index}>
+                    <li>이름: {container.name}</li>
                     <li>이미지: {container.image}</li>
-                  </>
+                  </React.Fragment>
                 ))}
               </ul>
             </div>
