@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/table";
 import { SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import React, { useState, useEffect } from 'react';
@@ -45,6 +46,8 @@ function App() {
   const router = useRouter();
   const { isLoggedIn, logout } = useAuth();
   const [clusters, setClusters] = useState<ClusterResponse[]>([]);
+  const [showAgentDeleteDialog, setShowAgentDeleteDialog] = useState(false);
+  const [selectedCluster, setSelectedCluster] = useState<string>('');
 
   // 백엔드에서 클러스터 목록을 가져오는 함수
   const fetchClusters = async () => {
@@ -128,10 +131,8 @@ function App() {
   };
 
   const handleDeleteAgent = (clusterName: string) => {
-    // Agent 삭제 로직
-    alert(`클러스터 '${clusterName}' Agent 삭제 로직 (프론트엔드)`);
-    // TODO: 백엔드 Agent 상태 업데이트 API 호출 후 목록 새로고침
-    fetchClusters();
+    setSelectedCluster(clusterName);
+    setShowAgentDeleteDialog(true);
   };
 
   const handleAuthButtonClick = () => {
@@ -224,6 +225,42 @@ function App() {
               로그인이 필요합니다.
             </div>
           )}
+
+          {/* Agent 삭제 명령어 팝업 */}
+          <Dialog open={showAgentDeleteDialog} onOpenChange={setShowAgentDeleteDialog}>
+            <DialogContent className="sm:max-w-[625px]">
+              <DialogHeader>
+                <DialogTitle>Agent 삭제 명령어</DialogTitle>
+                <DialogDescription>
+                  클러스터에서 Agent를 삭제하기 위한 명령어를 제공합니다.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <p className="text-sm text-gray-600">
+                  클러스터 <strong>{selectedCluster}</strong>에서 Agent를 삭제하려면 다음 명령어를 실행하세요:
+                </p>
+                <div className="bg-gray-100 p-4 rounded-md">
+                  <code className="text-sm font-mono">make undeploy</code>
+                </div>
+                <div className="flex justify-end space-x-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowAgentDeleteDialog(false)}
+                  >
+                    닫기
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      navigator.clipboard.writeText('make undeploy');
+                      alert('명령어가 클립보드에 복사되었습니다.');
+                    }}
+                  >
+                    명령어 복사
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </main>
       </SidebarProvider>
     </div>
