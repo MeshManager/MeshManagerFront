@@ -65,6 +65,12 @@ function ClusterRegistrationPage() {
       alert("클러스터 이름을 입력해주세요.");
       return;
     }
+
+    // 클러스터명에 숫자가 포함되어 있는지 확인
+    if (/\d/.test(clusterName)) {
+      alert("클러스터명에는 숫자를 사용할 수 없습니다.");
+      return;
+    }
   
     try {
       const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CLUSTER || 'http://localhost:8082';
