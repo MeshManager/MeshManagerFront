@@ -39,6 +39,7 @@ interface ServiceNameListResponse {
 interface ClusterInfo {
   uuid: string;
   name: string;
+  agentConnected?: boolean;
 }
 
 function SidebarToggleButton() {
@@ -92,7 +93,7 @@ export default function CanaryDeployPage() {
         }
         const result = await response.json();
         if (result && result.data) {
-          const clustersWithAgent = result.data.map((cluster: any) => ({
+          const clustersWithAgent = result.data.map((cluster: ClusterInfo) => ({
             ...cluster,
             agentConnected: cluster.agentConnected ?? false
           }));
