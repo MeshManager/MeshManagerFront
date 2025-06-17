@@ -30,6 +30,7 @@ interface NamespaceInfo {
 interface ClusterInfo {
   uuid: string;
   name: string;
+  agentConnected?: boolean;
   namespaces?: NamespaceInfo[];
 }
 
@@ -82,7 +83,7 @@ export default function DarkReleasePage() {
         const result = await response.json(); // DataResponse 객체 전체를 받음
         if (result && result.data) { // result.data가 존재하는지 확인
           // agentConnected 필드가 없으면 false로 기본값 설정 (필요 시)
-          const clustersWithAgent = result.data.map((cluster: any) => ({
+          const clustersWithAgent = result.data.map((cluster: ClusterInfo) => ({
             ...cluster,
             agentConnected: cluster.agentConnected ?? false
           }));

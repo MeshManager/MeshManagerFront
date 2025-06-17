@@ -25,6 +25,7 @@ interface NamespaceInfo {
 interface ClusterInfo {
   uuid: string;
   name: string;
+  agentConnected?: boolean;
   // 백엔드에서 namespaces를 직접 주지 않을 경우, 이 필드는 없을 수 있습니다.
   // namespaces?: NamespaceInfo[]; // 제거하거나 선택적 필드로 유지
 }
@@ -102,7 +103,7 @@ export default function CanaryDeployPage() {
         const result = await response.json(); // DataResponse 객체 전체를 받음
         if (result && result.data) { // result.data가 존재하는지 확인
           // agentConnected 필드가 없으면 false로 기본값 설정 (필요 시)
-          const clustersWithAgent = result.data.map((cluster: any) => ({
+          const clustersWithAgent = result.data.map((cluster: ClusterInfo) => ({
             ...cluster,
             agentConnected: cluster.agentConnected ?? false // app/page.tsx 와 일관되게 처리
           }));

@@ -162,12 +162,7 @@ function ClusterRegistrationPage() {
     alert("명령어가 복사되었습니다!");
   };
 
-  const handleAgentConnected = () => {
-    setIsRegistering(false);
-    setShowCommandDialog(false);
-    alert("Agent 연결이 완료되었습니다!");
-    router.push('/');
-  };
+
 
   const handleClusterNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setClusterName(e.target.value);

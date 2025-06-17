@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import React, { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,9 +31,8 @@ interface ClusterDetail {
   services?: ServiceInfo[];
 }
 
-export default function ClusterDetailPage() {
+function ClusterDetailContent() {
   const searchParams = useSearchParams();
-  const router = useRouter();
   const uuid = searchParams.get('clusterId');
   
   const [clusterDetail, setClusterDetail] = useState<ClusterDetail | null>(null);
@@ -164,4 +163,23 @@ export default function ClusterDetailPage() {
       </Card>
     </div>
   );
-} 
+}
+
+export default function ClusterDetailPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center min-h-screen bg-gray-100 p-4">
+        <Card className="w-full max-w-2xl">
+          <CardHeader>
+            <CardTitle>로딩 중...</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p>클러스터 정보를 불러오고 있습니다...</p>
+          </CardContent>
+        </Card>
+      </div>
+    }>
+      <ClusterDetailContent />
+    </Suspense>
+  );
+}
