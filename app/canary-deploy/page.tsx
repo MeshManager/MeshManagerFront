@@ -12,44 +12,34 @@ import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Label as UiLabel } from '@/components/ui/label';
 
-interface ServiceInfo {
+interface ContainerInfo {
   name: string;
-  versions: string[];
+  image: string;
 }
 
-interface NamespaceInfo {
+interface DeploymentInfo {
   name: string;
-  services: ServiceInfo[];
+  containers: ContainerInfo[];
+  podLabels: Record<string, string>;
+  replicas: number;
+}
+
+interface DeploymentListResponse {
+  data: DeploymentInfo[];
+}
+
+interface NamespaceListResponse {
+  namespaces: string[];
+}
+
+interface ServiceNameListResponse {
+  serviceNames: string[];
 }
 
 interface ClusterInfo {
   uuid: string;
   name: string;
-  // 백엔드에서 namespaces를 직접 주지 않을 경우, 이 필드는 없을 수 있습니다.
-  // namespaces?: NamespaceInfo[]; // 제거하거나 선택적 필드로 유지
 }
-
-// MOCK DATA: 백엔드에서 실제 데이터를 제공하기 전까지 사용
-const MOCK_NAMESPACES: NamespaceInfo[] = [
-  {
-    name: 'default',
-    services: [
-      { name: 'my-service-v1', versions: ['1.0.0', '1.1.0'] },
-      { name: 'another-service', versions: ['2.0.0', '2.1.0'] },
-    ],
-  },
-  {
-    name: 'kube-system',
-    services: [{ name: 'kube-dns', versions: ['1.0.0'] }],
-  },
-  {
-    name: 'mesh-app',
-    services: [
-      { name: 'frontend-service', versions: ['v1.0.0', 'v1.0.1', 'v1.1.0'] },
-      { name: 'backend-service', versions: ['v2.0.0', 'v2.0.1'] },
-    ],
-  },
-];
 
 function SidebarToggleButton() {
   const { state } = useSidebar();
@@ -74,15 +64,16 @@ export default function CanaryDeployPage() {
 
   const [clusters, setClusters] = useState<ClusterInfo[]>([]);
   const [selectedClusterUuid, setSelectedClusterUuid] = useState<string | null>(null);
-  const [availableNamespaces, setAvailableNamespaces] = useState<NamespaceInfo[]>([]);
+  const [availableNamespaces, setAvailableNamespaces] = useState<string[]>([]);
   const [selectedNamespace, setSelectedNamespace] = useState<string | null>(null);
-  const [availableServices, setAvailableServices] = useState<ServiceInfo[]>([]);
+  const [availableServices, setAvailableServices] = useState<string[]>([]);
   const [selectedService, setSelectedService] = useState<string | null>(null);
   const [availableVersions, setAvailableVersions] = useState<string[]>([]);
   const [originalVersion, setOriginalVersion] = useState<string | null>(null);
   const [canaryVersion, setCanaryVersion] = useState<string | null>(null);
   const [canaryRatio, setCanaryRatio] = useState<number[]>([10]); // Default to 10%
   const [stickySession, setStickySession] = useState<boolean>(false);
+  const [deployments, setDeployments] = useState<DeploymentInfo[]>([]);
 
   useEffect(() => {
     if (!isLoading && !isLoggedIn) {
@@ -99,17 +90,13 @@ export default function CanaryDeployPage() {
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
-        const result = await response.json(); // DataResponse 객체 전체를 받음
-        if (result && result.data) { // result.data가 존재하는지 확인
-          // agentConnected 필드가 없으면 false로 기본값 설정 (필요 시)
+        const result = await response.json();
+        if (result && result.data) {
           const clustersWithAgent = result.data.map((cluster: any) => ({
             ...cluster,
-            agentConnected: cluster.agentConnected ?? false // app/page.tsx 와 일관되게 처리
+            agentConnected: cluster.agentConnected ?? false
           }));
           setClusters(clustersWithAgent);
-          // if (clustersWithAgent.length > 0) {
-          //   setSelectedClusterUuid(clustersWithAgent[0].uuid); // 첫 번째 클러스터 자동 선택
-          // }
         } else {
           setClusters([]);
         }
@@ -124,43 +111,102 @@ export default function CanaryDeployPage() {
     }
   }, [isLoggedIn]);
 
-  // 선택된 클러스터에 따라 네임스페이스 업데이트 (현재는 MOCK 데이터 사용)
+  // 선택된 클러스터에 따라 네임스페이스 업데이트
   useEffect(() => {
-    // 실제 백엔드에서 클러스터별 네임스페이스를 제공할 경우, 여기 로직을 업데이트해야 합니다.
-    setAvailableNamespaces(MOCK_NAMESPACES); // 모든 클러스터에 동일한 MOCK 네임스페이스 적용
-    setSelectedNamespace(null); // 클러스터 변경 시 네임스페이스 초기화
-    setSelectedService(null);
-    setOriginalVersion(null);
-    setCanaryVersion(null);
-  }, [selectedClusterUuid]); // 'clusters' 의존성을 제거 (mock data 사용 시 불필요)
+    const fetchNamespaces = async () => {
+      if (!selectedClusterUuid) {
+        setAvailableNamespaces([]);
+        setSelectedNamespace(null);
+        return;
+      }
+      
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CLUSTER || 'http://localhost:8082';
+        const response = await fetch(`${apiUrl}/api/v1/cluster/namespaces?clusterId=${selectedClusterUuid}`);
+        if (!response.ok) throw new Error('네임스페이스 목록을 불러오는데 실패했습니다.');
+        
+        const data: NamespaceListResponse = await response.json();
+        setAvailableNamespaces(data.namespaces);
+        setSelectedNamespace(null);
+        setSelectedService(null);
+        setOriginalVersion(null);
+        setCanaryVersion(null);
+      } catch (error) {
+        console.error('네임스페이스 목록을 불러오는데 실패했습니다:', error);
+        setAvailableNamespaces([]);
+      }
+    };
+
+    fetchNamespaces();
+  }, [selectedClusterUuid]);
 
   // 선택된 네임스페이스에 따라 서비스 업데이트
   useEffect(() => {
-    if (selectedNamespace) {
-      const ns = availableNamespaces.find(n => n.name === selectedNamespace);
-      setAvailableServices(ns ? ns.services : []);
-      setSelectedService(null); // 서비스 변경 시 초기화
-      setOriginalVersion(null);
-      setCanaryVersion(null);
-    } else {
-      setAvailableServices([]);
-      setSelectedService(null);
-    }
-  }, [selectedNamespace, availableNamespaces]);
+    const fetchServices = async () => {
+      if (!selectedClusterUuid || !selectedNamespace) {
+        setAvailableServices([]);
+        setSelectedService(null);
+        return;
+      }
+      
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CLUSTER || 'http://localhost:8082';
+        const response = await fetch(`${apiUrl}/api/v1/cluster/services?clusterId=${selectedClusterUuid}&namespace=${selectedNamespace}`);
+        if (!response.ok) throw new Error('서비스 목록을 불러오는데 실패했습니다.');
+        
+        const data: ServiceNameListResponse = await response.json();
+        setAvailableServices(data.serviceNames);
+        setSelectedService(null);
+        setOriginalVersion(null);
+        setCanaryVersion(null);
+      } catch (error) {
+        console.error('서비스 목록을 불러오는데 실패했습니다:', error);
+        setAvailableServices([]);
+      }
+    };
 
-  // 선택된 서비스에 따라 버전 업데이트
+    fetchServices();
+  }, [selectedClusterUuid, selectedNamespace]);
+
+  // 선택된 서비스에 따라 디플로이먼트 정보 및 버전 업데이트
   useEffect(() => {
-    if (selectedService) {
-      const service = availableServices.find(s => s.name === selectedService);
-      setAvailableVersions(service ? service.versions : []);
-      setOriginalVersion(null); // 버전 변경 시 초기화
-      setCanaryVersion(null);
-    } else {
-      setAvailableVersions([]);
-      setOriginalVersion(null);
-      setCanaryVersion(null);
-    }
-  }, [selectedService, availableServices]);
+    const fetchDeployments = async () => {
+      if (!selectedClusterUuid || !selectedNamespace || !selectedService) {
+        setDeployments([]);
+        setAvailableVersions([]);
+        setOriginalVersion(null);
+        setCanaryVersion(null);
+        return;
+      }
+      
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CLUSTER || 'http://localhost:8082';
+        const response = await fetch(`${apiUrl}/api/v1/cluster/deployments?clusterId=${selectedClusterUuid}&namespace=${selectedNamespace}&serviceName=${selectedService}`);
+        if (!response.ok) throw new Error('디플로이먼트 정보를 불러오는데 실패했습니다.');
+        
+        const data: DeploymentListResponse = await response.json();
+        setDeployments(data.data);
+        
+        // pod 라벨에서 version 추출
+        const versions = new Set<string>();
+        data.data.forEach(deployment => {
+          if (deployment.podLabels && deployment.podLabels.version) {
+            versions.add(deployment.podLabels.version);
+          }
+        });
+        
+        setAvailableVersions(Array.from(versions));
+        setOriginalVersion(null);
+        setCanaryVersion(null);
+      } catch (error) {
+        console.error('디플로이먼트 정보를 불러오는데 실패했습니다:', error);
+        setDeployments([]);
+        setAvailableVersions([]);
+      }
+    };
+
+    fetchDeployments();
+  }, [selectedClusterUuid, selectedNamespace, selectedService]);
 
   const handleLogout = () => {
     logout();
@@ -185,11 +231,11 @@ export default function CanaryDeployPage() {
   };
 
   if (isLoading) {
-    return null; // 또는 로딩 스피너 등을 표시할 수 있습니다.
+    return null;
   }
 
   if (!isLoggedIn) {
-    return null; // 로그인되지 않은 경우 아무것도 렌더링하지 않고 리다이렉션을 기다립니다. (이 로직은 위 useEffect에서 처리되므로 사실상 도달하지 않습니다.)
+    return null;
   }
 
   return (
@@ -236,7 +282,7 @@ export default function CanaryDeployPage() {
                     </SelectTrigger>
                     <SelectContent>
                       {(availableNamespaces || []).map(ns => (
-                        <SelectItem key={ns.name} value={ns.name}>{ns.name}</SelectItem>
+                        <SelectItem key={ns} value={ns}>{ns}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -252,7 +298,7 @@ export default function CanaryDeployPage() {
                     </SelectTrigger>
                     <SelectContent>
                       {(availableServices || []).map(svc => (
-                        <SelectItem key={svc.name} value={svc.name}>{svc.name}</SelectItem>
+                        <SelectItem key={svc} value={svc}>{svc}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -266,7 +312,7 @@ export default function CanaryDeployPage() {
                     </SelectTrigger>
                     <SelectContent>
                       {(availableVersions || [])
-                        .filter(version => version !== canaryVersion) // 카나리 받을 버전과 겹치지 않게 필터링
+                        .filter(version => version !== canaryVersion)
                         .map(version => (
                           <SelectItem 
                             key={version} 
@@ -287,7 +333,7 @@ export default function CanaryDeployPage() {
                     </SelectTrigger>
                     <SelectContent>
                       {(availableVersions || [])
-                        .filter(version => version !== originalVersion) // 기존 버전과 겹치지 않게 필터링
+                        .filter(version => version !== originalVersion)
                         .map(version => (
                           <SelectItem 
                             key={version} 
@@ -320,6 +366,47 @@ export default function CanaryDeployPage() {
                 />
                 <UiLabel htmlFor="sticky-session">Sticky Session 활성화</UiLabel>
               </div>
+
+              {/* 리소스 정보 표시 섹션 */}
+              {deployments.length > 0 && (
+                <div className="mt-6 space-y-4">
+                  <hr className="my-4" />
+                  <h3 className="text-lg font-semibold">리소스 정보</h3>
+                  
+                  {deployments.map((deployment, index) => (
+                    <Card key={index} className="p-4">
+                      <h4 className="font-medium mb-2">Deployment: {deployment.name}</h4>
+                      <p className="text-sm text-gray-600 mb-2">Replicas: {deployment.replicas}</p>
+                      
+                      {deployment.containers && deployment.containers.length > 0 && (
+                        <div className="mb-3">
+                          <h5 className="font-medium text-sm mb-1">컨테이너 정보</h5>
+                          <ul className="list-disc pl-5 space-y-1 text-sm">
+                            {deployment.containers.map((container, containerIndex) => (
+                              <li key={containerIndex}>
+                                <span className="font-medium">{container.name}</span>: {container.image}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {deployment.podLabels && Object.keys(deployment.podLabels).length > 0 && (
+                        <div>
+                          <h5 className="font-medium text-sm mb-1">Pod 라벨</h5>
+                          <ul className="list-disc pl-5 space-y-1 text-sm">
+                            {Object.entries(deployment.podLabels).map(([key, value]) => (
+                              <li key={key}>
+                                <span className="font-medium">{key}</span>: {value}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </Card>
+                  ))}
+                </div>
+              )}
 
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={handleRollback} disabled={!selectedClusterUuid || !selectedNamespace || !selectedService}>
