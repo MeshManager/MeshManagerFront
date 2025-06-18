@@ -68,7 +68,9 @@ export default function SettingsPage() {
               <CardTitle>Settings</CardTitle>
             </CardHeader>
             <CardContent>
-              <p>Settings 페이지입니다. 여기에 설정 관련 내용을 추가하세요.</p>
+              <p>Settings 페이지입니다. 개발중...
+                저희 많이 잘했죠?!
+              </p>
               {/* 여기에 Settings 기능을 위한 UI 요소를 추가할 수 있습니다. */}
             </CardContent>
           </Card>

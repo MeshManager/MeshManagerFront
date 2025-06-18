@@ -104,54 +104,203 @@ export default function DarkReleasePage() {
 
   // 선택된 클러스터에 따라 네임스페이스 업데이트
   useEffect(() => {
-    if (selectedClusterUuid) {
-      const cluster = clusters.find(c => c.uuid === selectedClusterUuid);
-      setAvailableNamespaces(cluster && cluster.namespaces ? cluster.namespaces : []);
-      setSelectedNamespace(null); // 클러스터 변경 시 네임스페이스 초기화
-      setSelectedService(null);
-      setSelectedServiceVersion(null);
-    } else {
-      setAvailableNamespaces([]);
-      setSelectedNamespace(null);
-    }
-  }, [selectedClusterUuid, clusters]);
+    const fetchNamespaces = async () => {
+      if (!selectedClusterUuid) {
+        setAvailableNamespaces([]);
+        setSelectedNamespace(null);
+        return;
+      }
+      
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CLUSTER || 'http://localhost:8082';
+        const response = await fetch(`${apiUrl}/api/v1/cluster/namespaces?clusterId=${selectedClusterUuid}`);
+        if (!response.ok) throw new Error('네임스페이스 목록을 불러오는데 실패했습니다.');
+        
+        const data = await response.json();
+        setAvailableNamespaces(data.namespaces.map((ns: string) => ({ name: ns })));
+        setSelectedNamespace(null);
+        setSelectedService(null);
+        setSelectedServiceVersion(null);
+      } catch (error) {
+        console.error('네임스페이스 목록을 불러오는데 실패했습니다:', error);
+        setAvailableNamespaces([]);
+      }
+    };
+
+    fetchNamespaces();
+  }, [selectedClusterUuid]);
 
   // 선택된 네임스페이스에 따라 서비스 업데이트
   useEffect(() => {
-    if (selectedNamespace) {
-      const ns = availableNamespaces.find(n => n.name === selectedNamespace);
-      setAvailableServices(ns && ns.services ? ns.services : []);
-      setSelectedService(null); // 서비스 변경 시 초기화
-      setSelectedServiceVersion(null);
-    } else {
-      setAvailableServices([]);
-      setSelectedService(null);
-    }
-  }, [selectedNamespace, availableNamespaces]);
+    const fetchServices = async () => {
+      if (!selectedClusterUuid || !selectedNamespace) {
+        setAvailableServices([]);
+        setSelectedService(null);
+        return;
+      }
+      
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CLUSTER || 'http://localhost:8082';
+        const response = await fetch(`${apiUrl}/api/v1/cluster/services?clusterId=${selectedClusterUuid}&namespace=${selectedNamespace}`);
+        if (!response.ok) throw new Error('서비스 목록을 불러오는데 실패했습니다.');
+        
+        const data = await response.json();
+        setAvailableServices(data.serviceNames.map((svc: string) => ({ name: svc, versions: [] })));
+        setSelectedService(null);
+        setSelectedServiceVersion(null);
+      } catch (error) {
+        console.error('서비스 목록을 불러오는데 실패했습니다:', error);
+        setAvailableServices([]);
+      }
+    };
+
+    fetchServices();
+  }, [selectedClusterUuid, selectedNamespace]);
 
   // 선택된 서비스에 따라 버전 업데이트
   useEffect(() => {
-    if (selectedService) {
-      const service = availableServices.find(s => s.name === selectedService);
-      setAvailableVersions(service && service.versions ? service.versions : []);
-      setSelectedServiceVersion(null); // 버전 변경 시 초기화
-    } else {
-      setAvailableVersions([]);
-      setSelectedServiceVersion(null);
-    }
-  }, [selectedService, availableServices]);
+    const fetchVersions = async () => {
+      if (!selectedClusterUuid || !selectedNamespace || !selectedService) {
+        setAvailableVersions([]);
+        setSelectedServiceVersion(null);
+        return;
+      }
+      
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CLUSTER || 'http://localhost:8082';
+        const response = await fetch(`${apiUrl}/api/v1/cluster/deployments?clusterId=${selectedClusterUuid}&namespace=${selectedNamespace}&serviceName=${selectedService}`);
+        if (!response.ok) throw new Error('디플로이먼트 정보를 불러오는데 실패했습니다.');
+        
+        const data = await response.json();
+        const versions = new Set<string>();
+        
+        if (data.data && Array.isArray(data.data)) {
+          data.data.forEach((deployment: any) => {
+            if (deployment.containers && Array.isArray(deployment.containers)) {
+              deployment.containers.forEach((container: any) => {
+                if (container.image) {
+                  const imageTag = container.image.split(':')[1] || 'latest';
+                  versions.add(imageTag);
+                }
+              });
+            }
+          });
+        }
+        
+        setAvailableVersions(Array.from(versions));
+        setSelectedServiceVersion(null);
+      } catch (error) {
+        console.error('버전 목록을 불러오는데 실패했습니다:', error);
+        setAvailableVersions([]);
+      }
+    };
+
+    fetchVersions();
+  }, [selectedClusterUuid, selectedNamespace, selectedService]);
 
   const handleLogout = () => {
     logout();
   };
 
-  const handleStartDarkRelease = () => {
+  const handleStartDarkRelease = async () => {
     if (!selectedClusterUuid || !selectedNamespace || !selectedService || !selectedServiceVersion || !ipAddress) {
       alert("모든 필드를 입력해주세요.");
       return;
     }
-    alert(`다크 릴리즈 시작:\n클러스터 UUID: ${selectedClusterUuid}\n네임스페이스: ${selectedNamespace}\n서비스: ${selectedService}\n서비스 버전: ${selectedServiceVersion}\nIP 주소: ${ipAddress}`);
-    // 여기에 실제 다크 릴리즈 로직을 추가합니다.
+
+    try {
+      const crdApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CRD || 'http://localhost:8084';
+      
+      // 1단계: 먼저 ServiceEntity 생성
+      const serviceEntityData = {
+        name: selectedService,
+        namespace: selectedNamespace,
+        serviceType: 'StandardType', // 다크 릴리스는 StandardType 사용
+        commitHash: [selectedServiceVersion] // 선택된 버전으로 설정
+      };
+      
+      console.log('ServiceEntity 요청 데이터:', serviceEntityData);
+
+      const serviceEntityResponse = await fetch(`${crdApiUrl}/crd/api/v1/${selectedClusterUuid}/serviceEntity`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(serviceEntityData),
+      });
+
+      if (!serviceEntityResponse.ok) {
+        const errorText = await serviceEntityResponse.text();
+        console.error('ServiceEntity 에러 응답:', errorText);
+        throw new Error(`ServiceEntity 생성 실패! status: ${serviceEntityResponse.status}, 응답: ${errorText}`);
+      }
+
+      const serviceEntityResult = await serviceEntityResponse.json();
+      
+      console.log('ServiceEntity 응답 전체:', JSON.stringify(serviceEntityResult, null, 2));
+      console.log('ServiceEntity result:', serviceEntityResult.result);
+      console.log('ServiceEntity result의 모든 키:', serviceEntityResult.result ? Object.keys(serviceEntityResult.result) : 'result가 없음');
+      console.log('ServiceEntity 응답 result.ID:', serviceEntityResult.result?.ID);
+      console.log('ServiceEntity 응답 result.id (소문자):', serviceEntityResult.result?.id);
+      
+      if (!serviceEntityResult.result || !serviceEntityResult.code) {
+        throw new Error(serviceEntityResult.message || 'ServiceEntity 생성에 실패했습니다.');
+      }
+
+      // ID 또는 id 둘 다 시도
+      const serviceEntityId = serviceEntityResult.result.ID || serviceEntityResult.result.id;
+      console.log('추출된 serviceEntityId:', serviceEntityId);
+      console.log('serviceEntityId 타입:', typeof serviceEntityId);
+      
+      if (!serviceEntityId) {
+        console.error('ID 추출 실패. result 구조:', serviceEntityResult.result);
+        throw new Error('ServiceEntity ID를 받아오지 못했습니다.');
+      }
+
+      // 2단계: 생성된 ServiceEntity ID로 DarknessRelease 생성
+      const darknessReleaseData = {
+        serviceEntityId: serviceEntityId,
+        commitHash: selectedServiceVersion,
+        ips: [ipAddress]
+      };
+
+      console.log('DarknessRelease 요청 데이터:', darknessReleaseData);
+
+      const darknessResponse = await fetch(`${crdApiUrl}/crd/api/v1/${selectedClusterUuid}/darknessRelease`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(darknessReleaseData),
+      });
+
+      if (!darknessResponse.ok) {
+        const errorText = await darknessResponse.text();
+        console.error('DarknessRelease 에러 응답:', errorText);
+        throw new Error(`DarknessRelease 생성 실패! status: ${darknessResponse.status}, 응답: ${errorText}`);
+      }
+
+      const darknessResult = await darknessResponse.json();
+      
+      if (darknessResult.result && darknessResult.code) {
+        alert(`다크 릴리스가 성공적으로 생성되었습니다!\n` +
+              `ServiceEntity ID: ${serviceEntityId}\n` +
+              `서비스: ${selectedService}\n` +
+              `네임스페이스: ${selectedNamespace}\n` +
+              `버전: ${selectedServiceVersion}\n` +
+              `IP: ${ipAddress}`);
+        
+        // 성공 후 폼 초기화
+        setSelectedService(null);
+        setSelectedServiceVersion(null);
+        setIpAddress("");
+      } else {
+        throw new Error(darknessResult.message || '다크 릴리스 생성에 실패했습니다.');
+      }
+    } catch (error) {
+      console.error('다크 릴리스 생성 중 오류 발생:', error);
+      alert(`다크 릴리스 생성에 실패했습니다: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
 
   if (isLoading) {
@@ -227,15 +376,19 @@ export default function DarkReleasePage() {
               </div>
 
               <div>
-                <UiLabel htmlFor="service-version" className="block text-sm font-medium text-gray-700">서비스 버전</UiLabel>
+                <UiLabel htmlFor="service-version" className="block text-sm font-medium text-gray-700">deployment 버전</UiLabel>
                 <Select onValueChange={setSelectedServiceVersion} value={selectedServiceVersion || ''} disabled={!selectedService}>
                   <SelectTrigger id="service-version" className="mt-1">
-                    <SelectValue placeholder="서비스 버전 선택" />
+                    <SelectValue placeholder="deployment 버전 선택" />
                   </SelectTrigger>
                   <SelectContent>
-                    {(availableVersions || []).map(version => (
-                      <SelectItem key={version} value={version}>{version}</SelectItem>
-                    ))}
+                    {availableVersions.length > 0 ? (
+                      availableVersions.map(version => (
+                        <SelectItem key={version} value={version}>{version}</SelectItem>
+                      ))
+                    ) : selectedService ? (
+                      <SelectItem key="no-deployment" value="no-deployment" disabled>deployment가 없습니다</SelectItem>
+                    ) : null}
                   </SelectContent>
                 </Select>
               </div>

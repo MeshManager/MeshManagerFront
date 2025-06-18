@@ -28,7 +28,6 @@ export default function LoginPage() {
     console.log('Attempting to log in with:', { id, password });
     if (id === 'user' && password === 'pass') {
       login('dummy-auth-token');
-      alert('로그인 성공!');
       router.refresh();
       router.push('/');
     } else {
