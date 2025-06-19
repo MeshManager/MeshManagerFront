@@ -34,6 +34,16 @@ interface ClusterInfo {
   agentConnected?: boolean;
 }
 
+interface ContainerInfo {
+  image: string;
+  name?: string;
+}
+
+interface DeploymentInfo {
+  name: string;
+  containers: ContainerInfo[];
+}
+
 function SidebarToggleButton() {
   const { state } = useSidebar();
 
@@ -175,9 +185,9 @@ export default function DarkReleasePage() {
         const versions = new Set<string>();
         
         if (data.data && Array.isArray(data.data)) {
-          data.data.forEach((deployment: any) => {
+          data.data.forEach((deployment: DeploymentInfo) => {
             if (deployment.containers && Array.isArray(deployment.containers)) {
-              deployment.containers.forEach((container: any) => {
+              deployment.containers.forEach((container: ContainerInfo) => {
                 if (container.image) {
                   const imageTag = container.image.split(':')[1] || 'latest';
                   versions.add(imageTag);
