@@ -61,12 +61,39 @@ function App() {
       const clusterResult = await clusterResponse.json();
       const clusterList = clusterResult.data || [];
 
-      // agent-service에서 연결된 agent 이름들을 가져옴
-      const agentApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_AGENT || 'http://localhost:8081';
-      const agentResponse = await fetch(`${agentApiUrl}/api/v1/agent/connected`);
-      const connectedAgents = agentResponse.ok ? await agentResponse.json() : [];
+      // 먼저 클러스터 목록을 화면에 표시 (agent 연결 상태는 undefined)
+      setClusters(clusterList.map((cluster: ClusterResponse) => ({
+        ...cluster,
+        agentConnected: undefined // 아직 확인 중
+      })));
 
-      // 클러스터 이름과 Redis 키(agent 이름) 매칭
+      // agent-service에서 연결된 agent 이름들을 가져옴 (실패해도 클러스터 목록은 표시)
+      let connectedAgents = [];
+      try {
+        const agentApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_AGENT || 'http://localhost:8081';
+        
+        // AbortController로 timeout 설정 (5초)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const agentResponse = await fetch(`${agentApiUrl}/api/v1/agent/connected`, {
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (agentResponse.ok) {
+          connectedAgents = await agentResponse.json();
+        }
+      } catch (agentError: unknown) {
+        const errorMessage = agentError instanceof Error && agentError.name === 'AbortError' ? 'Timeout' : agentError;
+        console.error("Agent API 실패 (클러스터 목록은 정상 표시):", errorMessage);
+      }
+
+      // 클러스터 이름과 Redis 키(agent 이름) 매칭하여 최종 업데이트
       const clustersWithStatus = clusterList.map((cluster: ClusterResponse) => ({
         ...cluster,
         agentConnected: connectedAgents.includes(cluster.name)
@@ -193,7 +220,7 @@ function App() {
                             </Link>
                           </TableCell>
                           <TableCell>
-                            {cluster.agentConnected ? "연결됨" : "연결 안됨"}
+                            {cluster.agentConnected === undefined ? "확인 중..." : cluster.agentConnected ? "연결됨" : "연결 안됨"}
                           </TableCell>
                           <TableCell className="text-right">
                             <Button
