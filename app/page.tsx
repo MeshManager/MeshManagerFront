@@ -183,7 +183,11 @@ function App() {
           <div className="flex justify-end mb-4">
             <div className="group relative flex items-center">
               {isLoggedIn && <Button variant="ghost" className="mr-2 cursor-pointer">user</Button>}
-              <Button variant="outline" onClick={handleAuthButtonClick} className="absolute right-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+              <Button
+                variant="outline"
+                onClick={handleAuthButtonClick}
+                className={`absolute right-0 transition-opacity duration-200 ${isLoggedIn ? 'opacity-0 group-hover:opacity-100' : ''}`}
+              >
                 {isLoggedIn ? "로그아웃" : "로그인"}
               </Button>
             </div>

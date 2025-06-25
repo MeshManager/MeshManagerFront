@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState, useEffect, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useAuth } from '@/contexts/AuthContext';
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -60,6 +61,8 @@ interface ClusterDetail {
 function ClusterDetailContent() {
   const searchParams = useSearchParams();
   const uuid = searchParams.get('clusterId');
+  const router = useRouter();
+  const { isLoggedIn, isLoading } = useAuth();
   
   const [clusterDetail, setClusterDetail] = useState<ClusterDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -68,6 +71,15 @@ function ClusterDetailContent() {
   const [services, setServices] = useState<string[]>([]);
   const [selectedNamespace, setSelectedNamespace] = useState<string>('');
   const [selectedService, setSelectedService] = useState<string>('');
+
+  useEffect(() => {
+    if (!isLoading && !isLoggedIn) {
+      // 현재 페이지를 로그인 후 리다이렉션 대상으로 저장
+      const currentPath = `/cluster-detail${uuid ? `?clusterId=${uuid}` : ''}`;
+      localStorage.setItem('redirectAfterLogin', currentPath);
+      router.push('/login');
+    }
+  }, [isLoggedIn, isLoading, router, uuid]);
 
   useEffect(() => {
     if (!uuid) {
@@ -135,9 +147,10 @@ function ClusterDetailContent() {
         if (!response.ok) throw new Error('서비스 목록을 불러오는데 실패했습니다.');
         
         const data: ServiceNameListResponse = await response.json();
-        setServices(data.serviceNames);
-        if (data.serviceNames.length > 0) {
-          setSelectedService(data.serviceNames[0]);
+        const filteredServices = data.serviceNames.filter(serviceName => serviceName !== 'kubernetes');
+        setServices(filteredServices);
+        if (filteredServices.length > 0) {
+          setSelectedService(filteredServices[0]);
         }
       } catch (error) {
         console.error('서비스 목록을 불러오는데 실패했습니다:', error);
@@ -174,6 +187,25 @@ function ClusterDetailContent() {
 
     fetchResources();
   }, [uuid, selectedNamespace, selectedService]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100 p-4">
+        <Card className="w-full max-w-2xl">
+          <CardHeader>
+            <CardTitle>로딩 중...</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p>인증 정보를 확인하고 있습니다...</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!isLoggedIn) {
+    return null; // 리다이렉션 중
+  }
 
   if (loading) {
     return (

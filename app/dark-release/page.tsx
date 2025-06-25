@@ -77,6 +77,8 @@ export default function DarkReleasePage() {
 
   useEffect(() => {
     if (!isLoading && !isLoggedIn) {
+      // 현재 페이지를 로그인 후 리다이렉션 대상으로 저장
+      localStorage.setItem('redirectAfterLogin', '/dark-release');
       router.push('/login');
     }
   }, [isLoggedIn, isLoading, router]);
@@ -155,7 +157,7 @@ export default function DarkReleasePage() {
         if (!response.ok) throw new Error('서비스 목록을 불러오는데 실패했습니다.');
         
         const data = await response.json();
-        setAvailableServices(data.serviceNames.map((svc: string) => ({ name: svc, versions: [] })));
+        setAvailableServices(data.serviceNames.filter((svc: string) => svc !== 'kubernetes').map((svc: string) => ({ name: svc, versions: [] })));
         setSelectedService(null);
         setSelectedServiceVersion(null);
       } catch (error) {
@@ -231,7 +233,7 @@ export default function DarkReleasePage() {
       
       console.log('ServiceEntity 요청 데이터:', serviceEntityData);
 
-      const serviceEntityResponse = await fetch(`${crdApiUrl}/crd/api/v1/${selectedClusterUuid}/serviceEntity`, {
+      const serviceEntityResponse = await fetch(`${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/serviceEntity`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -276,7 +278,7 @@ export default function DarkReleasePage() {
 
       console.log('DarknessRelease 요청 데이터:', darknessReleaseData);
 
-      const darknessResponse = await fetch(`${crdApiUrl}/crd/api/v1/${selectedClusterUuid}/darknessRelease`, {
+      const darknessResponse = await fetch(`${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/darknessRelease`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

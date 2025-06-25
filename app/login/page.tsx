@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
@@ -13,7 +12,6 @@ export default function LoginPage() {
   const [id, setId] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const router = useRouter();
   const { login } = useAuth();
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -28,8 +26,6 @@ export default function LoginPage() {
     console.log('Attempting to log in with:', { id, password });
     if (id === 'user' && password === 'pass') {
       login('dummy-auth-token');
-      router.refresh();
-      router.push('/');
     } else {
       setError('잘못된 아이디 또는 비밀번호입니다.');
     }

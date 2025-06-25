@@ -39,6 +39,8 @@ function ClusterRegistrationPage() {
 
   useEffect(() => {
     if (!isLoading && !isLoggedIn) {
+      // 현재 페이지를 로그인 후 리다이렉션 대상으로 저장
+      localStorage.setItem('redirectAfterLogin', '/cluster-registration');
       router.push('/login');
     }
   }, [isLoggedIn, isLoading, router]);
@@ -144,7 +146,7 @@ function ClusterRegistrationPage() {
       console.log('클러스터 등록 성공:', result);
       
       // Agent 설치 명령어 형식 변경: make deploy 명령
-      const agentCommand = `make deploy IMG=public.ecr.aws/j8f1l6o6/mesh-agent:v4 UUID="${result.uuid}" AGENT_NAME="${clusterName}" AGENT_URL="http://192.168.0.141:8081/api/v1/agent" DESIRED_STATE_URL="sadfasdf" CLUSTER_MANAGEMENT_URL="http://192.168.0.141:8083/api/v1/management/clusters"`;
+      const agentCommand = `make deploy IMG=public.ecr.aws/j8f1l6o6/mesh-agent:v4 UUID="${result.uuid}" AGENT_NAME="${clusterName}" AGENT_URL="https://www.meshmanagers.com/api/v1/agent" DESIRED_STATE_URL="https://www.meshmanagers.com/api/v1/crd" CLUSTER_MANAGEMENT_URL="https://www.meshmanagers.com/api/v1/management/clusters"`;
 
       setAgentInstallCommand(agentCommand);
       setShowCommandDialog(true);

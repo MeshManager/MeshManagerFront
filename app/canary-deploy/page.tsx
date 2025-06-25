@@ -88,8 +88,60 @@ export default function CanaryDeployPage() {
   const [deployments, setDeployments] = useState<DeploymentInfo[]>([]);
   const [currentCanaryDeployments, setCurrentCanaryDeployments] = useState<CanaryDeployment[]>([]);
 
+  // CRD API URL 정의
+  const crdApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CRD || 'http://localhost:8084';
+
+  // 현재 카나리 배포 목록을 조회하는 함수 (useCallback으로 메모이제이션)
+  const fetchCurrentCanaryDeployments = React.useCallback(async () => {
+    if (!selectedClusterUuid) {
+      setCurrentCanaryDeployments([]);
+      return;
+    }
+    
+    try {
+      const response = await fetch(`${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/list`);
+      
+      if (!response.ok) {
+        console.error('현재 카나리 배포 목록 조회 실패');
+        setCurrentCanaryDeployments([]);
+        return;
+      }
+      
+      const result = await response.json();
+      
+      if (result.success && result.data && Array.isArray(result.data.serviceEntityID) && result.data.serviceEntityID.length > 0) {
+        const entityDetailsPromises = result.data.serviceEntityID.map(async (entityId: number) => {
+          try {
+            const entityResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${entityId}`);
+            if (entityResponse.ok) {
+              const entityResult = await entityResponse.json();
+              if (entityResult.success) {
+                return { id: entityId, ...entityResult.data };
+              }
+            }
+          } catch (error) {
+            console.error(`Entity ${entityId} 조회 실패:`, error);
+          }
+          return null;
+        });
+        
+        Promise.all(entityDetailsPromises).then(details => {
+          const validEntities = details.filter(entity => entity !== null);
+          setCurrentCanaryDeployments(validEntities as CanaryDeployment[]);
+        });
+      } else {
+          setCurrentCanaryDeployments([]);
+      }
+    } catch (error) {
+      console.error("카나리 배포 목록 조회 중 오류 발생:", error);
+      setCurrentCanaryDeployments([]);
+    }
+  }, [selectedClusterUuid, setCurrentCanaryDeployments, crdApiUrl]);
+
   useEffect(() => {
     if (!isLoading && !isLoggedIn) {
+      // 현재 페이지를 로그인 후 리다이렉션 대상으로 저장
+      localStorage.setItem('redirectAfterLogin', '/canary-deploy');
       router.push('/login');
     }
   }, [isLoggedIn, isLoading, router]);
@@ -168,7 +220,7 @@ export default function CanaryDeployPage() {
         if (!response.ok) throw new Error('서비스 목록을 불러오는데 실패했습니다.');
         
         const data: ServiceNameListResponse = await response.json();
-        setAvailableServices(data.serviceNames);
+        setAvailableServices(data.serviceNames.filter(serviceName => serviceName !== 'kubernetes'));
         setSelectedService(null);
         setOriginalVersion(null);
         setCanaryVersion(null);
@@ -200,13 +252,20 @@ export default function CanaryDeployPage() {
         const data: DeploymentListResponse = await response.json();
         setDeployments(data.data);
         
-        // pod 라벨에서 version 추출
+        // 컨테이너 이미지 태그에서 version 추출 (다크릴리즈와 동일한 방식)
         const versions = new Set<string>();
-        data.data.forEach(deployment => {
-          if (deployment.podLabels && deployment.podLabels.version) {
-            versions.add(deployment.podLabels.version);
-          }
-        });
+        if (data.data && Array.isArray(data.data)) {
+          data.data.forEach((deployment) => {
+            if (deployment.containers && Array.isArray(deployment.containers)) {
+              deployment.containers.forEach((container) => {
+                if (container.image) {
+                  const imageTag = container.image.split(':')[1] || 'latest';
+                  versions.add(imageTag);
+                }
+              });
+            }
+          });
+        }
         
         setAvailableVersions(Array.from(versions));
         setOriginalVersion(null);
@@ -221,219 +280,171 @@ export default function CanaryDeployPage() {
     fetchDeployments();
   }, [selectedClusterUuid, selectedNamespace, selectedService]);
 
-  // 현재 카나리 배포 목록을 조회하는 useEffect
+  // 현재 카나리 배포 목록을 조회하는 useEffect (이동 후 호출만 남김)
   useEffect(() => {
-    const fetchCurrentCanaryDeployments = async () => {
-      if (!selectedClusterUuid) {
-        setCurrentCanaryDeployments([]);
-        return;
-      }
-      
-      try {
-        const crdApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CRD || 'http://localhost:8084';
-        const response = await fetch(`${crdApiUrl}/crd/api/v1/${selectedClusterUuid}/list`);
-        
-        if (!response.ok) {
-          console.error('현재 카나리 배포 목록 조회 실패');
-          return;
-        }
-        
-        const result = await response.json();
-        
-        if (result.success && result.data.serviceEntityID.length > 0) {
-          // 각 Service Entity의 상세 정보를 조회
-          const entityDetailsPromises = result.data.serviceEntityID.map(async (entityId: number) => {
-            try {
-              const entityResponse = await fetch(`${crdApiUrl}/crd/api/v1/service/${entityId}`);
-              if (entityResponse.ok) {
-                const entityResult = await entityResponse.json();
-                if (entityResult.success) {
-                  return {
-                    id: entityId,
-                    ...entityResult.data
-                  };
-                }
-              }
-            } catch (error) {
-              console.error(`Entity ${entityId} 조회 실패:`, error);
-            }
-            return null;
-          });
-          
-          const entityDetails = await Promise.all(entityDetailsPromises);
-          const validEntities = entityDetails.filter(entity => entity !== null);
-          setCurrentCanaryDeployments(validEntities);
-        } else {
-          setCurrentCanaryDeployments([]);
-        }
-      } catch (error) {
-        console.error('현재 카나리 배포 목록 조회 중 오류:', error);
-        setCurrentCanaryDeployments([]);
-      }
-    };
-
     fetchCurrentCanaryDeployments();
-  }, [selectedClusterUuid]);
+  }, [fetchCurrentCanaryDeployments]);
 
   const handleLogout = () => {
     logout();
   };
 
-  const handleDeploy = async () => {
-    if (selectedClusterUuid && selectedNamespace && selectedService && originalVersion && canaryVersion && canaryRatio[0] !== undefined) {
-      try {
-        const crdApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CRD || 'http://localhost:8084';
-        
-        // ServiceEntity 생성 API 호출
-        const serviceEntityData = {
-          name: selectedService,
-          namespace: selectedNamespace,
-          serviceType: stickySession ? 'StickyCanaryType' : 'CanaryType',
-          ratio: canaryRatio[0],
-          commitHash: [originalVersion, canaryVersion]
-        };
-
-        const response = await fetch(`${crdApiUrl}/crd/api/v1/${selectedClusterUuid}/serviceEntity`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(serviceEntityData),
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const result = await response.json();
-        
-        // 백엔드 응답 형식에 맞게 수정: result 객체가 있고 code가 성공 코드인지 확인
-        if (result.result && result.code) {
-          alert(`카나리 배포가 성공적으로 생성되었습니다!\n생성된 Service Entity ID: ${result.result.ID}\n메시지: ${result.message}`);
-          
-          // 성공 후 폼 초기화
-          setOriginalVersion(null);
-          setCanaryVersion(null);
-          setCanaryRatio([10]);
-          setStickySession(false);
-          
-          // 카나리 배포 목록 새로고침
-          const crdApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CRD || 'http://localhost:8084';
-          fetch(`${crdApiUrl}/crd/api/v1/${selectedClusterUuid}/list`)
-            .then(res => res.json())
-            .then(listResult => {
-              if (listResult.result && listResult.result.serviceEntityID && listResult.result.serviceEntityID.length > 0) {
-                const entityDetailsPromises = listResult.result.serviceEntityID.map(async (entityId: number) => {
-                  try {
-                    const entityResponse = await fetch(`${crdApiUrl}/crd/api/v1/service/${entityId}`);
-                    if (entityResponse.ok) {
-                      const entityResult = await entityResponse.json();
-                      if (entityResult.result) {
-                        return { id: entityId, ...entityResult.result };
-                      }
-                    }
-                  } catch (error) {
-                    console.error(`Entity ${entityId} 조회 실패:`, error);
-                  }
-                  return null;
-                });
-                
-                Promise.all(entityDetailsPromises).then(details => {
-                  const validEntities = details.filter(entity => entity !== null);
-                  setCurrentCanaryDeployments(validEntities);
-                });
-              }
-            })
-            .catch(error => console.error('카나리 배포 목록 새로고침 실패:', error));
-        } else {
-          throw new Error(result.message || '카나리 배포 생성에 실패했습니다.');
-        }
-              } catch (error) {
-          console.error('카나리 배포 생성 중 오류 발생:', error);
-          alert(`카나리 배포 생성에 실패했습니다: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    } else {
-      alert('모든 필드를 선택해주세요.');
-    }
-  };
-
-  const handleRollback = async () => {
-    if (selectedClusterUuid && selectedNamespace && selectedService) {
-      try {
-        const crdApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CRD || 'http://localhost:8084';
-        
-        // 먼저 해당 클러스터의 Service Entity 목록을 조회
-        const listResponse = await fetch(`${crdApiUrl}/crd/api/v1/${selectedClusterUuid}/list`);
-        if (!listResponse.ok) {
-          throw new Error('Service Entity 목록 조회에 실패했습니다.');
-        }
-        
-        const listResult = await listResponse.json();
-        
-        if (listResult.result && listResult.result.serviceEntityID && listResult.result.serviceEntityID.length > 0) {
-          // 각 Service Entity에 대해 삭제 처리
-          const deletePromises = listResult.result.serviceEntityID.map(async (entityId: number) => {
-            // 먼저 해당 Service Entity의 정보를 확인
-            const entityResponse = await fetch(`${crdApiUrl}/crd/api/v1/service/${entityId}`);
-            if (entityResponse.ok) {
-              const entityResult = await entityResponse.json();
-              
-              // 선택된 서비스와 네임스페이스가 일치하는 경우에만 삭제
-              if (entityResult.result && 
-                  entityResult.result.name === selectedService && 
-                  entityResult.result.namespace === selectedNamespace) {
-                
-                const deleteResponse = await fetch(`${crdApiUrl}/crd/api/v1/service/${entityId}`, {
-                  method: 'DELETE',
-                });
-                
-                if (!deleteResponse.ok) {
-                  throw new Error(`Service Entity ${entityId} 삭제에 실패했습니다.`);
-                }
-                return entityId;
-              }
-            }
-            return null;
-          });
-          
-          const deletedIds = await Promise.all(deletePromises);
-          const actuallyDeleted = deletedIds.filter(id => id !== null);
-          
-          if (actuallyDeleted.length > 0) {
-            alert(`롤백이 완료되었습니다!\n삭제된 Service Entity IDs: ${actuallyDeleted.join(', ')}`);
-            
-            // 롤백 후 폼 초기화
-            setOriginalVersion(null);
-            setCanaryVersion(null);
-            setCanaryRatio([10]);
-            setStickySession(false);
-            
-            // 카나리 배포 목록 새로고침
-            setCurrentCanaryDeployments(prev => 
-              prev.filter(item => !actuallyDeleted.includes(item.id))
-            );
-          } else {
-            alert('해당 서비스에 대한 카나리 배포를 찾을 수 없습니다.');
-          }
-        } else {
-          alert('롤백할 카나리 배포가 없습니다.');
-        }
-              } catch (error) {
-          console.error('롤백 중 오류 발생:', error);
-          alert(`롤백에 실패했습니다: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    } else {
-      alert('클러스터, 네임스페이스, 서비스를 선택해주세요.');
-    }
-  };
-
+  // 로딩 중일 때는 아무것도 렌더링하지 않음
   if (isLoading) {
     return null;
   }
 
+  // 로그인되지 않은 경우 아무것도 렌더링하지 않고 리다이렉션을 기다림
   if (!isLoggedIn) {
     return null;
   }
+
+  const handleDeploy = async () => {
+    if (!selectedClusterUuid || !selectedNamespace || !selectedService || !originalVersion || !canaryVersion || canaryRatio[0] === undefined) {
+      alert("모든 필드를 입력해주세요.");
+      return;
+    }
+
+    try {
+      // 1단계: ServiceEntity 생성 또는 조회
+      const serviceEntityType: string = 'CanaryType'; // 카나리 배포는 CanaryType 사용
+      
+      // ServiceEntity가 이미 존재하는지 확인
+      const serviceEntityResponseList = await fetch(`${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/serviceEntity`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: selectedService,
+          namespace: selectedNamespace,
+          serviceType: serviceEntityType,
+          commitHash: [originalVersion, canaryVersion] // 두 버전 모두 포함
+        })
+      });
+
+      if (!serviceEntityResponseList.ok) {
+        const errorText = await serviceEntityResponseList.text();
+        console.error('ServiceEntity 조회 또는 생성 에러 응답:', errorText);
+        throw new Error(`ServiceEntity 조회 또는 생성 실패! status: ${serviceEntityResponseList.status}, 응답: ${errorText}`);
+      }
+
+      const serviceEntityResultList = await serviceEntityResponseList.json();
+      const serviceEntityId = serviceEntityResultList.data.id;
+
+      console.log('ServiceEntity 응답 전체 (카나리):', JSON.stringify(serviceEntityResultList, null, 2));
+
+      // 2단계: CanaryDeployment 생성
+      const canaryDeploymentData = {
+        name: selectedService,
+        namespace: selectedNamespace,
+        serviceType: serviceEntityType, // CanaryType
+        ratio: canaryRatio[0],
+        commitHash: [originalVersion, canaryVersion],
+        serviceEntityID: serviceEntityId,
+        stickySession: stickySession,
+        dependencyID: [] // TODO: 의존성 관리 기능 추가 시 구현
+      };
+
+      console.log('CanaryDeployment 요청 데이터:', canaryDeploymentData);
+
+      const response = await fetch(`${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/list`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(canaryDeploymentData),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('카나리 배포 생성 에러 응답:', errorText);
+        throw new Error(`카나리 배포 생성 실패! status: ${response.status}, 응답: ${errorText}`);
+      }
+
+      alert("카나리 배포 요청 성공!");
+      fetchCurrentCanaryDeployments(); // 재구성된 함수 호출
+    } catch (error) {
+      console.error("카나리 배포 요청 실패:", error);
+      alert(`카나리 배포 요청 실패: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const handleRollback = async () => {
+    if (!selectedClusterUuid || !selectedService || !selectedNamespace || currentCanaryDeployments.length === 0) {
+      alert("롤백할 카나리 배포가 없습니다.");
+      return;
+    }
+
+    const deploymentToRollback = currentCanaryDeployments.find(
+      (dep) => dep.name === selectedService && dep.namespace === selectedNamespace
+    );
+
+    if (!deploymentToRollback) {
+      alert("선택된 서비스에 대한 카나리 배포를 찾을 수 없습니다.");
+      return;
+    }
+
+    try {
+      // 1단계: ServiceEntity 정보 조회
+      const listResponse = await fetch(`${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/list`);
+      if (!listResponse.ok) throw new Error('ServiceEntity 목록 조회 실패');
+      const listResult = await listResponse.json();
+
+      const serviceEntityId = listResult.data.serviceEntityID.find(
+        (entity: CanaryDeployment) => entity.name === selectedService && entity.namespace === selectedNamespace
+      )?.id;
+
+      if (!serviceEntityId) {
+        alert("롤백할 ServiceEntity를 찾을 수 없습니다.");
+        return;
+      }
+
+      const entityResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${serviceEntityId}`);
+      if (!entityResponse.ok) throw new Error('ServiceEntity 상세 정보 조회 실패');
+      // const entityData = await entityResponse.json(); // 사용되지 않으므로 제거
+
+      // 2단계: CanaryDeployment 삭제 (롤백)
+      const deleteResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${deploymentToRollback.id}`, {
+        method: 'DELETE',
+      });
+
+      if (!deleteResponse.ok) {
+        const errorText = await deleteResponse.text();
+        throw new Error(`카나리 배포 롤백 실패! status: ${deleteResponse.status}, 응답: ${errorText}`);
+      }
+
+      alert("카나리 배포가 성공적으로 롤백되었습니다.");
+      fetchCurrentCanaryDeployments(); // 재구성된 함수 호출
+    } catch (error) {
+      console.error("카나리 배포 롤백 실패:", error);
+      alert(`카나리 배포 롤백 실패: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const handleAgentDelete = async (canaryDeployment: CanaryDeployment) => {
+    const confirmation = window.confirm(`정말로 '${canaryDeployment.name}' 카나리 배포를 삭제하시겠습니까?`);
+    if (!confirmation) {
+      return;
+    }
+
+    try {
+      const deleteResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${canaryDeployment.id}`, {
+        method: 'DELETE',
+      });
+
+      if (!deleteResponse.ok) {
+        const errorText = await deleteResponse.text();
+        throw new Error(`카나리 배포 삭제 실패! status: ${deleteResponse.status}, 응답: ${errorText}`);
+      }
+
+      alert(`카나리 배포 '${canaryDeployment.name}'이(가) 성공적으로 삭제되었습니다.`);
+      fetchCurrentCanaryDeployments(); // 재구성된 함수 호출
+    } catch (error) {
+      console.error("카나리 배포 삭제 중 오류 발생:", error);
+      alert(`카나리 배포 삭제 실패: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
 
   return (
     <div>
@@ -593,29 +604,7 @@ export default function CanaryDeployPage() {
                         <Button 
                           variant="destructive" 
                           size="sm"
-                          onClick={async () => {
-                            if (window.confirm(`${canaryDeployment.name} 카나리 배포를 삭제하시겠습니까?`)) {
-                              try {
-                                const crdApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CRD || 'http://localhost:8084';
-                                const deleteResponse = await fetch(`${crdApiUrl}/crd/api/v1/service/${canaryDeployment.id}`, {
-                                  method: 'DELETE',
-                                });
-                                
-                                if (deleteResponse.ok) {
-                                  alert('카나리 배포가 성공적으로 삭제되었습니다.');
-                                  // 목록 새로고침
-                                  setCurrentCanaryDeployments(prev => 
-                                    prev.filter(item => item.id !== canaryDeployment.id)
-                                  );
-                                } else {
-                                  throw new Error('삭제 요청 실패');
-                                }
-                              } catch (error) {
-                                console.error('카나리 배포 삭제 중 오류:', error);
-                                alert(`카나리 배포 삭제에 실패했습니다: ${error instanceof Error ? error.message : String(error)}`);
-                              }
-                            }
-                          }}
+                          onClick={() => handleAgentDelete(canaryDeployment)}
                         >
                           삭제
                         </Button>
