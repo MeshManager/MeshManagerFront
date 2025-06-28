@@ -148,7 +148,7 @@ function ClusterRegistrationPage() {
       console.log('클러스터 등록 성공:', result);
       
       // Agent 설치 명령어 형식 변경: make deploy 명령
-      const agentCommand = `make deploy IMG=public.ecr.aws/j8f1l6o6/mesh-agent:v4 UUID="${result.uuid}" AGENT_NAME="${clusterName}" AGENT_URL="https://www.meshmanagers.com/api/v1/agent" DESIRED_STATE_URL="https://www.meshmanagers.com/api/v1/crd" CLUSTER_MANAGEMENT_URL="https://www.meshmanagers.com/api/v1/management/clusters"`;
+      const agentCommand = `make deploy IMG=public.ecr.aws/j8f1l6o6/mesh-agent:v4 UUID="${result.uuid}" AGENT_NAME="${clusterName}" AGENT_URL="https://www.meshmanagers.com/api/v1/agent" DESIRED_STATE_URL="https://www.meshmanagers.com/api/v1/crd" CLUSTER_MANAGEMENT_URL="https://www.meshmanagers.com/api/v1/management/clusters" SLACK_WEB_HOOK_URL="${prometheusUrl}"`;
 
       setAgentInstallCommand(agentCommand);
       setShowCommandDialog(true);
@@ -296,14 +296,14 @@ function ClusterRegistrationPage() {
               </div>
 
               <div>
-                <label htmlFor="prometheus-url" className="block text-sm font-medium text-gray-700">프로메테우스 URL</label>
+                <label htmlFor="prometheus-url" className="block text-sm font-medium text-gray-700">슬랙 URL</label>
                 <div className="mt-1">
                   <Input
                     id="prometheus-url"
                     type="url"
                     value={prometheusUrl}
                     onChange={handlePrometheusUrlChange}
-                    placeholder="http://prometheus.example.com"
+                    placeholder="https://hooks.slack.com/services/..."
                   />
                 </div>
               </div>

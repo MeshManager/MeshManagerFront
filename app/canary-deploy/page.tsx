@@ -11,6 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Label as UiLabel } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Plus, Trash2, Clock, TrendingUp } from 'lucide-react';
 
 interface ContainerInfo {
   name: string;
@@ -42,6 +44,11 @@ interface ClusterInfo {
   agentConnected?: boolean;
 }
 
+interface RatioSchedule {
+  delayMs: number;
+  newRatio: number;
+}
+
 interface CanaryDeployment {
   id: number;
   name: string;
@@ -49,6 +56,7 @@ interface CanaryDeployment {
   serviceType: string;
   ratio: number;
   commitHash: string[];
+  ratioSchedules?: {triggerTime?: number; delayMs?: number; newRatio: number}[];
   darknessReleaseID?: number;
   dependencyID?: number[];
 }
@@ -87,9 +95,21 @@ export default function CanaryDeployPage() {
   const [stickySession, setStickySession] = useState<boolean>(false);
   const [deployments, setDeployments] = useState<DeploymentInfo[]>([]);
   const [currentCanaryDeployments, setCurrentCanaryDeployments] = useState<CanaryDeployment[]>([]);
-
+  
+  // RatioSchedule 관련 상태 추가
+  const [ratioSchedules, setRatioSchedules] = useState<RatioSchedule[]>([]);
+  const [enableSchedule, setEnableSchedule] = useState<boolean>(false);
+  
   // CRD API URL 정의
   const crdApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CRD || 'http://localhost:8084';
+
+  // 시간을 human-readable 형식으로 변환
+  const formatDelay = (delayMs: number): string => {
+    if (delayMs < 1000) return `${delayMs}ms`;
+    if (delayMs < 60000) return `${delayMs / 1000}s`;
+    if (delayMs < 3600000) return `${Math.floor(delayMs / 60000)}m ${Math.floor((delayMs % 60000) / 1000)}s`;
+    return `${Math.floor(delayMs / 3600000)}h ${Math.floor((delayMs % 3600000) / 60000)}m`;
+  };
 
   // 현재 카나리 배포 목록을 조회하는 함수 (useCallback으로 메모이제이션)
   const fetchCurrentCanaryDeployments = React.useCallback(async () => {
@@ -177,13 +197,335 @@ export default function CanaryDeployPage() {
     }
   }, [selectedClusterUuid, crdApiUrl]);
 
+  // 현재 카나리 배포 목록을 조회하는 useEffect - fetchCurrentCanaryDeployments 함수 정의 후에 배치
   useEffect(() => {
-    if (!isLoading && !isLoggedIn) {
-      // 현재 페이지를 로그인 후 리다이렉션 대상으로 저장
-      localStorage.setItem('redirectAfterLogin', '/canary-deploy');
-      router.push('/login');
+    // 초기 로딩이 완료되고 클러스터가 선택되었을 때만 호출
+    if (selectedClusterUuid) {
+      fetchCurrentCanaryDeployments();
     }
-  }, [isLoggedIn, isLoading, router]);
+  }, [selectedClusterUuid, fetchCurrentCanaryDeployments]);
+
+  // 현재 선택된 서비스의 카나리 배포 상태 확인
+  const currentServiceCanaryDeployment = React.useMemo((): CanaryDeployment | null => {
+    if (!selectedService || !selectedNamespace || !currentCanaryDeployments) {
+      return null;
+    }
+    return currentCanaryDeployments.find(
+      deployment => deployment.name === selectedService && deployment.namespace === selectedNamespace
+    ) || null;
+  }, [selectedService, selectedNamespace, currentCanaryDeployments]);
+
+  // RatioSchedule 관련 함수들
+  const addRatioSchedule = () => {
+    if (ratioSchedules.length >= 100) {
+      alert("최대 100개까지만 스케줄을 추가할 수 있습니다.");
+      return;
+    }
+    
+    setRatioSchedules([...ratioSchedules, { delayMs: 10000, newRatio: 50 }]);
+  };
+
+  const removeRatioSchedule = (index: number) => {
+    setRatioSchedules(ratioSchedules.filter((_, i) => i !== index));
+  };
+
+  const updateRatioSchedule = (index: number, field: keyof RatioSchedule, value: number) => {
+    const updated = [...ratioSchedules];
+    updated[index] = { ...updated[index], [field]: value };
+    setRatioSchedules(updated);
+  };
+
+  const handleLogout = () => {
+    logout();
+  };
+
+  // 스케줄 유효성 검증
+  const validateSchedules = (): string | null => {
+    if (!enableSchedule || ratioSchedules.length === 0) return null;
+    
+    for (const schedule of ratioSchedules) {
+      if (schedule.delayMs <= 0) {
+        return "지연 시간은 0보다 커야 합니다.";
+      }
+      if (schedule.newRatio < 0 || schedule.newRatio > 100) {
+        return "비율은 0-100 사이여야 합니다.";
+      }
+    }
+    
+    // 중복 시간 체크
+    const delays = ratioSchedules.map(s => s.delayMs);
+    const uniqueDelays = new Set(delays);
+    if (delays.length !== uniqueDelays.size) {
+      return "중복된 지연 시간이 있습니다.";
+    }
+    
+    return null;
+  };
+
+  const handleDeploy = async () => {
+    // 스케줄 유효성 검증
+    const validationError = validateSchedules();
+    if (validationError) {
+      alert(`스케줄 설정 오류: ${validationError}`);
+      return;
+    }
+
+    if (!selectedClusterUuid || !selectedNamespace || !selectedService || !originalVersion || !canaryVersion || canaryRatio[0] === undefined) {
+      alert("모든 필드를 입력해주세요.");
+      return;
+    }
+
+    // CommitHash 개수 검증 (2개 미만이면 Canary 배포 불가)
+    const allVersions = new Set([originalVersion, canaryVersion]);
+    if (allVersions.size < 2) {
+      alert("Canary 배포를 위해서는 최소 2개의 서로 다른 버전이 필요합니다.");
+      return;
+    }
+
+    try {
+      // 1단계: GET - 기존 ServiceEntity 확인 (Canary → Canary 업데이트 처리)
+      console.log('🔍 1단계: 기존 ServiceEntity 확인 (Canary → Canary 업데이트 처리)...');
+      let existingCanaryEntityIds: number[] = [];
+      let hasStandardDeployment = false;
+      
+      try {
+        const existingListResponse = await fetch(`${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/list`);
+        if (existingListResponse.ok) {
+          const existingListResult = await existingListResponse.json();
+          console.log('📋 기존 ServiceEntity 목록:', existingListResult);
+          
+          const serviceEntityIDs = existingListResult?.result?.serviceEntityID || existingListResult?.data?.serviceEntityID || [];
+          
+          if (Array.isArray(serviceEntityIDs) && serviceEntityIDs.length > 0) {
+            // 같은 서비스 이름과 네임스페이스를 가진 ServiceEntity 찾기
+            const entityCheckPromises = serviceEntityIDs.map(async (entityId: number) => {
+              try {
+                const entityResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${entityId}`);
+                if (entityResponse.ok) {
+                  const entityResult = await entityResponse.json();
+                  const entityData = entityResult?.result || entityResult?.data;
+                  
+                  if (entityData && 
+                      entityData.name === selectedService && 
+                      entityData.namespace === selectedNamespace) {
+                    
+                    if (entityData.serviceType === 'CanaryType' || entityData.serviceType === 'StickyCanaryType') {
+                      console.log(`🚀 기존 ${entityData.serviceType} ServiceEntity 발견: ID ${entityId} (삭제 후 새로 생성 예정)`, entityData);
+                      return { id: entityId, type: entityData.serviceType };
+                    } else if (entityData.serviceType === 'StandardType') {
+                      console.log(`🌑 기존 StandardType ServiceEntity 발견: ID ${entityId} (Dark Release용, 건드리지 않음)`, entityData);
+                      return { id: entityId, type: 'StandardType' };
+                    }
+                  }
+                }
+              } catch (error) {
+                console.error(`❌ Entity ${entityId} 조회 실패:`, error);
+              }
+              return null;
+            });
+            
+            const foundEntities = (await Promise.all(entityCheckPromises)).filter(entity => entity !== null);
+            
+            // CanaryType과 StandardType 구분하여 처리
+            const canaryEntities = foundEntities.filter(entity => 
+              entity.type === 'CanaryType' || entity.type === 'StickyCanaryType'
+            );
+            const standardEntities = foundEntities.filter(entity => entity.type === 'StandardType');
+            
+            if (canaryEntities.length > 0) {
+              existingCanaryEntityIds = canaryEntities.map(entity => entity.id);
+              console.log(`🔄 Canary → Canary 업데이트 감지: ${existingCanaryEntityIds.length}개의 기존 Canary/StickyCanary ServiceEntity 삭제 후 새로 생성`);
+            }
+            
+            if (standardEntities.length > 0) {
+              hasStandardDeployment = true;
+              console.log(`🌑 StandardType ServiceEntity 감지: ${standardEntities.length}개 (독립적으로 유지)`);
+            }
+          }
+        } else {
+          console.warn(`⚠️ CRD 목록 조회 실패 (${existingListResponse.status})`);
+        }
+      } catch (error) {
+        console.error('❌ 기존 ServiceEntity 확인 중 오류:', error);
+      }
+
+      // 2단계: DELETE - 기존 CanaryType ServiceEntity들만 삭제 (StandardType은 유지)
+      if (existingCanaryEntityIds.length > 0) {
+        console.log(`🗑️ 2단계: Canary → Canary 업데이트 - ${existingCanaryEntityIds.length}개의 기존 Canary/StickyCanary ServiceEntity 삭제 (StandardType은 유지)...`);
+        
+        for (const entityId of existingCanaryEntityIds) {
+          try {
+            console.log(`🗑️ 기존 Canary/StickyCanary ServiceEntity ${entityId} 삭제 시도...`);
+            const deleteResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${entityId}`, {
+              method: 'DELETE',
+            });
+            
+            if (deleteResponse.ok) {
+              console.log(`✅ 기존 Canary/StickyCanary ServiceEntity ${entityId} 삭제 성공`);
+            } else {
+              const errorText = await deleteResponse.text();
+              console.error(`❌ 기존 Canary/StickyCanary ServiceEntity ${entityId} 삭제 실패:`, errorText);
+              console.warn(`⚠️ ServiceEntity 삭제 실패했지만 배포를 계속 진행합니다.`);
+            }
+          } catch (error) {
+            console.error(`❌ 기존 Canary/StickyCanary ServiceEntity ${entityId} 삭제 중 오류:`, error);
+            console.warn(`⚠️ ServiceEntity 삭제 중 오류가 발생했지만 배포를 계속 진행합니다.`);
+          }
+        }
+        
+        // 삭제 후 잠시 대기 (DB 정리 시간 확보)
+        console.log('⏳ 기존 Canary 삭제 완료 후 대기 중...');
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      } else {
+        console.log('✅ 중복되는 Canary/StickyCanary ServiceEntity 없음 - 새로 생성');
+        if (hasStandardDeployment) {
+          console.log('🌑 StandardType과 독립적으로 Canary/StickyCanary 생성');
+        }
+      }
+
+      // 3단계: POST - 새로운 ServiceEntity 생성
+      const deploymentType = existingCanaryEntityIds.length > 0 ? '업데이트 (기존 삭제 후 새로 생성)' : '새로 생성';
+      console.log(`🆕 3단계: 새로운 ServiceEntity 생성 - ${deploymentType}...`);
+      
+      // 백엔드 API 형식에 맞춰 데이터 준비
+      const apiData = {
+        name: selectedService,
+        namespace: selectedNamespace,
+        serviceType: stickySession ? "StickyCanaryType" : "CanaryType",
+        ratio: canaryRatio[0],
+        commitHash: [originalVersion, canaryVersion],
+        // delayMs를 triggerTime(절대시간)으로 변환
+        ratioSchedules: enableSchedule ? ratioSchedules.map(schedule => ({
+          delayMs: schedule.delayMs, // 백엔드 요청 DTO에서는 delayMs 사용
+          newRatio: schedule.newRatio
+        })) : []
+      };
+
+      console.log('🚀 카나리 배포 요청 데이터:', apiData);
+
+      const response = await fetch(`${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/serviceEntity`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(apiData)
+      });
+
+      if (!response.ok) {
+        throw new Error(`배포 요청 실패: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      console.log('✅ 배포 성공:', result);
+      
+      alert(`카나리 배포가 성공적으로 완료되었습니다!\n` +
+            `${deploymentType}\n` +
+            `서비스: ${selectedService}\n` +
+            `네임스페이스: ${selectedNamespace}\n` +
+            `타입: ${stickySession ? 'StickyCanaryType' : 'CanaryType'}\n` +
+            `트래픽 비율: ${canaryRatio[0]}%\n` +
+            `버전: ${originalVersion} → ${canaryVersion}\n` +
+            `${enableSchedule ? `스케줄: ${ratioSchedules.length}개 설정됨` : '스케줄: 없음'}\n` +
+            `${existingCanaryEntityIds.length > 0 ? `(기존 ${existingCanaryEntityIds.length}개 Canary 배포 삭제 후 새로 생성됨)` : '(새로 생성됨)'}\n` +
+            `${hasStandardDeployment ? '🌑 Dark Release와 독립적으로 공존' : ''}`);
+      
+      // 배포 후 목록 새로고침
+      await fetchCurrentCanaryDeployments();
+      
+    } catch (error) {
+      console.error("❌ 배포 중 오류 발생:", error);
+      alert(`배포 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+    }
+  };
+
+  const handleRollback = async () => {
+    if (!currentServiceCanaryDeployment) {
+      alert("롤백할 카나리 배포가 없습니다.");
+      return;
+    }
+
+    const confirmed = confirm(`${currentServiceCanaryDeployment.name} 서비스의 카나리 배포를 롤백하시겠습니까?`);
+    if (!confirmed) return;
+
+    try {
+      const response = await fetch(`${crdApiUrl}/api/v1/crd/service/${currentServiceCanaryDeployment.id}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`롤백 요청 실패: ${response.status} ${response.statusText}`);
+      }
+
+      console.log('✅ 롤백 성공');
+      alert("카나리 배포가 성공적으로 롤백되었습니다!");
+      
+      // 롤백 후 목록 새로고침
+      await fetchCurrentCanaryDeployments();
+      
+    } catch (error) {
+      console.error("❌ 롤백 중 오류 발생:", error);
+      alert(`롤백 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+    }
+  };
+
+  const handleAgentDelete = async (canaryDeployment: CanaryDeployment) => {
+    const confirmed = confirm(`${canaryDeployment.name} 서비스의 카나리 배포를 삭제하시겠습니까?`);
+    if (!confirmed) return;
+
+    try {
+      const response = await fetch(`${crdApiUrl}/api/v1/crd/service/${canaryDeployment.id}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`삭제 요청 실패: ${response.status} ${response.statusText}`);
+      }
+
+      console.log('✅ 삭제 성공');
+      alert("카나리 배포가 성공적으로 삭제되었습니다!");
+      
+      // 삭제 후 목록 새로고침
+      await fetchCurrentCanaryDeployments();
+      
+    } catch (error) {
+      console.error("❌ 삭제 중 오류 발생:", error);
+      alert(`삭제 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+    }
+  };
+
+  // useEffect는 fetchCurrentCanaryDeployments 함수 정의 후에 배치
+  // 현재 선택된 서비스의 카나리 배포 상태가 변경될 때 스케줄 정보도 업데이트
+  useEffect(() => {
+    if (currentServiceCanaryDeployment) {
+      if (currentServiceCanaryDeployment.ratio !== undefined) {
+        setCanaryRatio([currentServiceCanaryDeployment.ratio]);
+      }
+      
+      // 기존 ratioSchedules 로드 - 백엔드 triggerTime을 delayMs로 변환
+      if (currentServiceCanaryDeployment.ratioSchedules && currentServiceCanaryDeployment.ratioSchedules.length > 0) {
+        const convertedSchedules: RatioSchedule[] = currentServiceCanaryDeployment.ratioSchedules.map((schedule) => {
+          // triggerTime이 절대 시간인 경우 상대 시간으로 변환
+          const currentTime = Date.now();
+          const delayMs = schedule.triggerTime ? Math.max(0, schedule.triggerTime - currentTime) : (schedule.delayMs || 0);
+          return {
+            delayMs: delayMs,
+            newRatio: schedule.newRatio
+          };
+        });
+        setRatioSchedules(convertedSchedules);
+        setEnableSchedule(true);
+      } else {
+        setRatioSchedules([]);
+        setEnableSchedule(false);
+      }
+    }
+  }, [currentServiceCanaryDeployment]);
 
   // 클러스터 목록을 불러오는 useEffect
   useEffect(() => {
@@ -319,367 +661,18 @@ export default function CanaryDeployPage() {
     fetchDeployments();
   }, [selectedClusterUuid, selectedNamespace, selectedService]);
 
-  // 현재 카나리 배포 목록을 조회하는 useEffect - 클러스터 변경 시에만 호출
   useEffect(() => {
-    // 초기 로딩이 완료되고 클러스터가 선택되었을 때만 호출
-    if (selectedClusterUuid) {
-      fetchCurrentCanaryDeployments();
+    if (!isLoading && !isLoggedIn) {
+      // 현재 페이지를 로그인 후 리다이렉션 대상으로 저장
+      localStorage.setItem('redirectAfterLogin', '/canary-deploy');
+      router.push('/login');
     }
-  }, [selectedClusterUuid]); // eslint-disable-line react-hooks/exhaustive-deps
-  // 의도적으로 fetchCurrentCanaryDeployments를 의존성에서 제외하여 무한 호출 방지
+  }, [isLoggedIn, isLoading, router]);
 
-  // 현재 선택된 서비스의 카나리 배포 상태 확인
-  const currentServiceCanaryDeployment = React.useMemo(() => {
-    if (!selectedService || !selectedNamespace || !currentCanaryDeployments) {
-      return null;
-    }
-    return currentCanaryDeployments.find(
-      deployment => deployment.name === selectedService && deployment.namespace === selectedNamespace
-    );
-  }, [selectedService, selectedNamespace, currentCanaryDeployments]);
-
-  // 현재 선택된 서비스의 카나리 배포 상태가 변경될 때 비율 슬라이더 업데이트
-  useEffect(() => {
-    if (currentServiceCanaryDeployment && currentServiceCanaryDeployment.ratio !== undefined) {
-      setCanaryRatio([currentServiceCanaryDeployment.ratio]);
-    }
-  }, [currentServiceCanaryDeployment]);
-
-  const handleLogout = () => {
-    logout();
-  };
-
-  // 로딩 중일 때는 아무것도 렌더링하지 않음
-  if (isLoading) {
-    return null;
+  // 로딩 중이거나 로그인되지 않은 경우 빈 화면 반환
+  if (isLoading || !isLoggedIn) {
+    return <div></div>;
   }
-
-  // 로그인되지 않은 경우 아무것도 렌더링하지 않고 리다이렉션을 기다림
-  if (!isLoggedIn) {
-    return null;
-  }
-
-  const handleDeploy = async () => {
-    if (!selectedClusterUuid || !selectedNamespace || !selectedService || !originalVersion || !canaryVersion || canaryRatio[0] === undefined) {
-      alert("모든 필드를 입력해주세요.");
-      return;
-    }
-
-    // CommitHash 개수 검증 (2개 미만이면 Canary 배포 불가)
-    const allVersions = new Set([originalVersion, canaryVersion]);
-    if (allVersions.size < 2) {
-      alert("Canary 배포를 위해서는 최소 2개의 서로 다른 버전이 필요합니다.");
-      return;
-    }
-
-    try {
-      // 1단계: GET - 기존 ServiceEntity 확인
-      console.log('🔍 1단계: 기존 ServiceEntity 확인...');
-      let existingCanaryEntityIds: number[] = [];
-      let hasStandardDeployment = false;
-      
-      try {
-        const existingListResponse = await fetch(`${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/list`);
-        if (existingListResponse.ok) {
-          const existingListResult = await existingListResponse.json();
-          console.log('📋 기존 ServiceEntity 목록:', existingListResult);
-          
-          const serviceEntityIDs = existingListResult?.result?.serviceEntityID || existingListResult?.data?.serviceEntityID || [];
-          
-          if (Array.isArray(serviceEntityIDs) && serviceEntityIDs.length > 0) {
-            // 같은 서비스 이름과 네임스페이스를 가진 ServiceEntity 찾기
-            const entityCheckPromises = serviceEntityIDs.map(async (entityId: number) => {
-              try {
-                const entityResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${entityId}`);
-                if (entityResponse.ok) {
-                  const entityResult = await entityResponse.json();
-                  const entityData = entityResult?.result || entityResult?.data;
-                  
-                  if (entityData && 
-                      entityData.name === selectedService && 
-                      entityData.namespace === selectedNamespace) {
-                    
-                    if (entityData.serviceType === 'CanaryType' || entityData.serviceType === 'StickyCanaryType') {
-                      console.log(`🚀 중복 ${entityData.serviceType} ServiceEntity 발견: ID ${entityId}`, entityData);
-                      return { id: entityId, type: entityData.serviceType };
-                    } else if (entityData.serviceType === 'StandardType') {
-                      console.log(`🌑 기존 StandardType ServiceEntity 발견: ID ${entityId} (Dark Release용, 건드리지 않음)`, entityData);
-                      return { id: entityId, type: 'StandardType' };
-                    }
-                  }
-                }
-              } catch (error) {
-                console.error(`❌ Entity ${entityId} 조회 실패:`, error);
-              }
-              return null;
-            });
-            
-            const foundEntities = (await Promise.all(entityCheckPromises)).filter(entity => entity !== null);
-            
-            // CanaryType과 StandardType 구분하여 처리
-            const canaryEntities = foundEntities.filter(entity => 
-              entity.type === 'CanaryType' || entity.type === 'StickyCanaryType'
-            );
-            const standardEntities = foundEntities.filter(entity => entity.type === 'StandardType');
-            
-            if (canaryEntities.length > 0) {
-              existingCanaryEntityIds = canaryEntities.map(entity => entity.id);
-              console.log(`🗑️ 삭제할 Canary/StickyCanary ServiceEntity IDs:`, existingCanaryEntityIds);
-            }
-            
-            if (standardEntities.length > 0) {
-              hasStandardDeployment = true;
-              console.log(`🌑 StandardType ServiceEntity 감지: ${standardEntities.length}개 (독립적으로 유지)`);
-            }
-          }
-        } else {
-          console.warn(`⚠️ CRD 목록 조회 실패 (${existingListResponse.status})`);
-        }
-      } catch (error) {
-        console.error('❌ 기존 ServiceEntity 확인 중 오류:', error);
-      }
-
-      // 2단계: DELETE - 기존 CanaryType ServiceEntity들만 삭제 (StandardType은 유지)
-      if (existingCanaryEntityIds.length > 0) {
-        console.log(`🗑️ 2단계: ${existingCanaryEntityIds.length}개의 Canary/StickyCanary ServiceEntity 삭제 (StandardType은 유지)...`);
-        
-        for (const entityId of existingCanaryEntityIds) {
-          try {
-            console.log(`🗑️ Canary/StickyCanary ServiceEntity ${entityId} 삭제 시도...`);
-            const deleteResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${entityId}`, {
-              method: 'DELETE',
-            });
-            
-            if (deleteResponse.ok) {
-              console.log(`✅ Canary/StickyCanary ServiceEntity ${entityId} 삭제 성공`);
-            } else {
-              const errorText = await deleteResponse.text();
-              console.error(`❌ Canary/StickyCanary ServiceEntity ${entityId} 삭제 실패:`, errorText);
-              console.warn(`⚠️ ServiceEntity 삭제 실패했지만 배포를 계속 진행합니다.`);
-            }
-          } catch (error) {
-            console.error(`❌ Canary/StickyCanary ServiceEntity ${entityId} 삭제 중 오류:`, error);
-            console.warn(`⚠️ ServiceEntity 삭제 중 오류가 발생했지만 배포를 계속 진행합니다.`);
-          }
-        }
-        
-        // 삭제 후 잠시 대기 (DB 정리 시간 확보)
-        console.log('⏳ 삭제 완료 후 대기 중...');
-        await new Promise(resolve => setTimeout(resolve, 1500));
-      } else {
-        console.log('✅ 중복되는 Canary/StickyCanary ServiceEntity 없음');
-        if (hasStandardDeployment) {
-          console.log('🌑 StandardType과 독립적으로 Canary/StickyCanary 생성');
-        }
-      }
-
-      // 3단계: POST - 새로운 ServiceEntity 생성
-      console.log('🆕 3단계: 새로운 ServiceEntity 생성...');
-      const serviceEntityType: string = stickySession ? 'StickyCanaryType' : 'CanaryType';
-      console.log(`📋 ServiceType 설정: ${serviceEntityType} (Sticky Session: ${stickySession})`);
-      
-      const serviceEntityResponseList = await fetch(`${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/serviceEntity`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: selectedService,
-          namespace: selectedNamespace,
-          serviceType: serviceEntityType,
-          ratio: canaryRatio[0], // ratio 필드 추가
-          commitHash: [originalVersion, canaryVersion]
-        })
-      });
-
-      if (!serviceEntityResponseList.ok) {
-        const errorText = await serviceEntityResponseList.text();
-        console.error('ServiceEntity 생성 에러 응답:', errorText);
-        throw new Error(`ServiceEntity 생성 실패! status: ${serviceEntityResponseList.status}, 응답: ${errorText}`);
-      }
-
-      const serviceEntityResultList = await serviceEntityResponseList.json();
-      console.log('🎯 ServiceEntity 응답 전체 구조:', JSON.stringify(serviceEntityResultList, null, 2));
-      
-      // 안전한 ID 추출 로직
-      let serviceEntityId = null;
-      
-      // 다양한 응답 구조에 대응
-      if (serviceEntityResultList.data) {
-        serviceEntityId = serviceEntityResultList.data.ID || serviceEntityResultList.data.id;
-        console.log('📍 data에서 ID 추출:', serviceEntityId);
-      } else if (serviceEntityResultList.result) {
-        serviceEntityId = serviceEntityResultList.result.ID || serviceEntityResultList.result.id;
-        console.log('📍 result에서 ID 추출:', serviceEntityId);
-      } else if (serviceEntityResultList.ID || serviceEntityResultList.id) {
-        serviceEntityId = serviceEntityResultList.ID || serviceEntityResultList.id;
-        console.log('📍 최상위에서 ID 추출:', serviceEntityId);
-      }
-
-      console.log('🆔 최종 추출된 ServiceEntity ID:', serviceEntityId);
-
-      if (!serviceEntityId) {
-        console.error('❌ ID 추출 실패. 응답 구조 분석:');
-        console.error('- data:', serviceEntityResultList.data);
-        console.error('- result:', serviceEntityResultList.result);
-        console.error('- 전체 키들:', Object.keys(serviceEntityResultList));
-        throw new Error('ServiceEntity ID를 받아오지 못했습니다. 백엔드 응답 구조를 확인해주세요.');
-      }
-
-      alert(`Canary 배포가 성공적으로 생성되었습니다!\n` +
-            `ServiceEntity ID: ${serviceEntityId}\n` +
-            `서비스: ${selectedService}\n` +
-            `네임스페이스: ${selectedNamespace}\n` +
-            `트래픽 비율: ${canaryRatio[0]}%\n` +
-            `버전: ${originalVersion} -> ${canaryVersion}\n` +
-            `${existingCanaryEntityIds.length > 0 ? `(기존 ${existingCanaryEntityIds.length}개 중복 배포 삭제 후 새로 생성됨)` : '(새로 생성됨)'}\n` +
-            `${hasStandardDeployment ? '🌑 Dark Release와 독립적으로 공존' : ''}`);
-      
-      // 목록 새로고침 (지연 추가)
-      setTimeout(() => {
-        fetchCurrentCanaryDeployments();
-      }, 1500);
-    } catch (error) {
-      console.error("카나리 배포 요청 실패:", error);
-      alert(`카나리 배포 요청 실패: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
-  const handleRollback = async () => {
-    if (!selectedClusterUuid || !selectedService || !selectedNamespace || currentCanaryDeployments.length === 0) {
-      alert("롤백할 카나리 배포가 없습니다.");
-      return;
-    }
-
-    const deploymentToRollback = currentCanaryDeployments.find(
-      (dep) => dep.name === selectedService && dep.namespace === selectedNamespace
-    );
-
-    if (!deploymentToRollback) {
-      alert("선택된 서비스에 대한 카나리 배포를 찾을 수 없습니다.");
-      return;
-    }
-
-    try {
-      // 1단계: ServiceEntity 정보 조회
-      const listResponse = await fetch(`${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/list`);
-      if (!listResponse.ok) throw new Error('ServiceEntity 목록 조회 실패');
-      const listResult = await listResponse.json();
-
-      // API 응답 구조 수정
-      const serviceEntityIDs = listResult?.result?.serviceEntityID || listResult?.data?.serviceEntityID || [];
-      
-      if (!Array.isArray(serviceEntityIDs) || serviceEntityIDs.length === 0) {
-        alert("롤백할 ServiceEntity를 찾을 수 없습니다.");
-        return;
-      }
-
-      // 2단계: 해당 서비스의 ServiceEntity ID 찾기
-      let targetEntityId = null;
-      for (const entityId of serviceEntityIDs) {
-        try {
-          const entityResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${entityId}`);
-          if (entityResponse.ok) {
-            const entityResult = await entityResponse.json();
-            const entityData = entityResult?.result || entityResult?.data;
-            if (entityData && entityData.name === selectedService && entityData.namespace === selectedNamespace) {
-              targetEntityId = entityId;
-              break;
-            }
-          }
-        } catch (error) {
-          console.error(`Entity ${entityId} 조회 실패:`, error);
-        }
-      }
-
-      if (!targetEntityId) {
-        alert("롤백할 ServiceEntity를 찾을 수 없습니다.");
-        return;
-      }
-
-      // 3단계: ServiceEntity 삭제 (롤백)
-      const deleteResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${targetEntityId}`, {
-        method: 'DELETE',
-      });
-
-      if (!deleteResponse.ok) {
-        const errorText = await deleteResponse.text();
-        throw new Error(`카나리 배포 롤백 실패! status: ${deleteResponse.status}, 응답: ${errorText}`);
-      }
-
-      alert("카나리 배포가 성공적으로 롤백되었습니다.");
-      
-      // 목록 새로고침 (지연 추가)
-      setTimeout(() => {
-        fetchCurrentCanaryDeployments();
-      }, 1000);
-    } catch (error) {
-      console.error("카나리 배포 롤백 실패:", error);
-      alert(`카나리 배포 롤백 실패: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
-  const handleAgentDelete = async (canaryDeployment: CanaryDeployment) => {
-    const confirmation = window.confirm(
-      `'${canaryDeployment.name}' 카나리 배포를 삭제하시겠습니까?\n\n` +
-      `서비스: ${canaryDeployment.name}\n` +
-      `네임스페이스: ${canaryDeployment.namespace}\n` +
-      `현재 비율: ${canaryDeployment.ratio}%`
-    );
-    
-    if (!confirmation) {
-      return;
-    }
-
-    try {
-      console.log(`🗑️ ServiceEntity 삭제 시작: ID ${canaryDeployment.id}`);
-      console.log(`📋 삭제 대상 정보:`, canaryDeployment);
-
-      const deleteResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${canaryDeployment.id}`, {
-        method: 'DELETE',
-      });
-
-      console.log(`📡 삭제 응답 상태: ${deleteResponse.status} ${deleteResponse.statusText}`);
-
-      if (!deleteResponse.ok) {
-        let errorMessage = `삭제 실패! status: ${deleteResponse.status}`;
-        
-        try {
-          const errorText = await deleteResponse.text();
-          console.log(`📄 에러 응답 내용:`, errorText);
-          
-          if (deleteResponse.status === 500) {
-            errorMessage = `서버 내부 오류가 발생했습니다.\n\n` +
-                          `이는 백엔드에서 삭제 처리 중 문제가 발생한 것입니다.\n` +
-                          `관리자에게 문의하거나 잠시 후 다시 시도해주세요.\n\n` +
-                          `상세 오류: ${errorText}`;
-          } else if (deleteResponse.status === 404) {
-            errorMessage = `삭제하려는 ServiceEntity를 찾을 수 없습니다.\n` +
-                          `이미 삭제되었거나 존재하지 않는 배포일 수 있습니다.`;
-          } else {
-            errorMessage = `삭제 실패: ${errorText}`;
-          }
-        } catch (parseError) {
-          console.error(`❌ 에러 응답 파싱 실패:`, parseError);
-          errorMessage = `삭제 실패! HTTP ${deleteResponse.status}`;
-        }
-
-        throw new Error(errorMessage);
-      }
-
-      console.log(`✅ ServiceEntity ${canaryDeployment.id} 삭제 성공`);
-      alert(`카나리 배포 '${canaryDeployment.name}'이(가) 성공적으로 삭제되었습니다.`);
-      
-      // 목록 새로고침 (지연 추가)
-      setTimeout(() => {
-        fetchCurrentCanaryDeployments();
-      }, 1000);
-      
-    } catch (error) {
-      console.error(`❌ 카나리 배포 삭제 중 오류 발생:`, error);
-      alert(`카나리 배포 삭제 실패:\n\n${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
 
   return (
     <div>
@@ -702,6 +695,15 @@ export default function CanaryDeployPage() {
               <CardTitle>Canary Deploy</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-4">
+              <div className="flex justify-end mb-4">
+                <div className="group relative flex items-center">
+                  <Button variant="ghost" className="mr-2 cursor-pointer">user</Button>
+                  <Button variant="outline" onClick={handleLogout} className="absolute right-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    로그아웃
+                  </Button>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <UiLabel htmlFor="cluster">클러스터</UiLabel>
@@ -810,6 +812,154 @@ export default function CanaryDeployPage() {
                 <UiLabel htmlFor="sticky-session">Sticky Session 활성화</UiLabel>
               </div>
 
+              {/* RatioSchedule 설정 섹션 */}
+              <div className="mt-6 p-4 border rounded-lg bg-gray-50">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center space-x-2">
+                    <Switch
+                      id="enable-schedule"
+                      checked={enableSchedule}
+                      disabled={!selectedClusterUuid || !selectedNamespace || !selectedService || !originalVersion || !canaryVersion || canaryRatio[0] === undefined}
+                      onCheckedChange={(checked) => {
+                        setEnableSchedule(checked);
+                        if (!checked) {
+                          setRatioSchedules([]);
+                        }
+                      }}
+                    />
+                    <UiLabel htmlFor="enable-schedule" className="flex items-center gap-2">
+                      <Clock className="w-4 h-4" />
+                      시간별 비율 스케줄링
+                      {(!selectedClusterUuid || !selectedNamespace || !selectedService || !originalVersion || !canaryVersion || canaryRatio[0] === undefined) && (
+                        <span className="text-xs text-red-500 ml-2">
+                          (기본 설정을 먼저 완료하세요)
+                        </span>
+                      )}
+                    </UiLabel>
+                  </div>
+                  
+                  {enableSchedule && (selectedClusterUuid && selectedNamespace && selectedService && originalVersion && canaryVersion && canaryRatio[0] !== undefined) && (
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={addRatioSchedule}
+                        disabled={ratioSchedules.length >= 100}
+                        className="flex items-center gap-2"
+                      >
+                        <Plus className="w-4 h-4" />
+                        스케줄 추가 ({ratioSchedules.length}/100)
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                {!selectedClusterUuid || !selectedNamespace || !selectedService || !originalVersion || !canaryVersion || canaryRatio[0] === undefined ? (
+                  // 기본 설정이 완료되지 않았을 때는 아무것도 표시하지 않음
+                  null
+                ) : enableSchedule && (
+                  <div className="space-y-4">
+                    <div className="text-sm text-gray-600 mb-4">
+                      <p>📅 배포 시점에 미리 계획된 시간별 카나리 트래픽 비율 변경을 스케줄링합니다.</p>
+                      <p>💡 초기 비율: {canaryRatio[0]}% → 설정된 시간 후 스케줄된 비율로 변경</p>
+                      <p>⏱️ 지연시간은 밀리초(ms) 단위로 입력하세요 (예: 10000ms = 10초)</p>
+                      <p className="text-amber-600 text-xs mt-2">
+                        ⚠️ 참고: 스케줄은 배포 시점에 설정되며, 실시간으로 변경되지 않습니다.
+                      </p>
+                    </div>
+
+                    {/* 폼 뷰만 유지 */}
+                    <div className="space-y-4">
+                      {ratioSchedules.length === 0 ? (
+                        <div className="text-center py-8 text-gray-500">
+                          <TrendingUp className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                          <p>스케줄이 없습니다. &quot;스케줄 추가&quot; 버튼을 눌러 시간별 비율 변경을 설정하세요.</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <div className="font-medium text-sm flex items-center gap-2">
+                            <TrendingUp className="w-4 h-4" />
+                            스케줄 목록 ({ratioSchedules.length}개)
+                          </div>
+                          
+                          {/* 초기 상태 표시 */}
+                          <div className="flex items-center gap-4 p-3 bg-blue-50 rounded-lg border">
+                            <div className="text-sm">
+                              <span className="font-medium">시작:</span> {canaryRatio[0]}%
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              ⏰ 0ms (배포 직후)
+                            </div>
+                          </div>
+
+                          {/* 스케줄 항목들 */}
+                          {ratioSchedules.map((schedule, index) => (
+                            <div key={index} className="flex items-center gap-4 p-3 bg-white rounded-lg border">
+                              <div className="flex-1 grid grid-cols-2 gap-4">
+                                <div>
+                                  <UiLabel className="text-xs text-gray-600">지연시간 (ms)</UiLabel>
+                                  <Input
+                                    type="number"
+                                    min="1"
+                                    value={schedule.delayMs}
+                                    onChange={(e) => updateRatioSchedule(index, 'delayMs', parseInt(e.target.value) || 0)}
+                                    placeholder="10000"
+                                    className="h-8"
+                                  />
+                                  <div className="text-xs text-gray-500 mt-1">
+                                    = {formatDelay(schedule.delayMs)}
+                                  </div>
+                                </div>
+                                <div>
+                                  <UiLabel className="text-xs text-gray-600">새로운 비율 (%)</UiLabel>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    value={schedule.newRatio}
+                                    onChange={(e) => updateRatioSchedule(index, 'newRatio', parseInt(e.target.value) || 0)}
+                                    placeholder="50"
+                                    className="h-8"
+                                  />
+                                </div>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => removeRatioSchedule(index)}
+                                className="flex items-center gap-1 text-red-600 hover:text-red-700"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          ))}
+
+                          {/* 스케줄 미리보기 */}
+                          {ratioSchedules.length > 0 && (
+                            <div className="mt-4 p-3 bg-green-50 rounded-lg border">
+                              <div className="text-sm font-medium mb-2 flex items-center gap-2">
+                                <TrendingUp className="w-4 h-4" />
+                                스케줄 미리보기
+                              </div>
+                              <div className="text-xs space-y-1">
+                                <div>0초 후: {canaryRatio[0]}% (배포 직후)</div>
+                                {[...ratioSchedules].sort((a, b) => a.delayMs - b.delayMs).map((schedule, index) => (
+                                  <div key={`preview-${index}`}>
+                                    {formatDelay(schedule.delayMs)} 후: {schedule.newRatio}%
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* 현재 선택된 서비스의 카나리 배포 상태 */}
               {selectedService && selectedNamespace && (
                 <div className="mt-6 p-4 border rounded-lg bg-gray-50">
@@ -830,6 +980,63 @@ export default function CanaryDeployPage() {
                         <p><strong>네임스페이스:</strong> {currentServiceCanaryDeployment.namespace}</p>
                         <p><strong>버전:</strong> {currentServiceCanaryDeployment.commitHash?.join(' → ') || 'N/A'}</p>
                         <p><strong>타입:</strong> {currentServiceCanaryDeployment.serviceType}</p>
+                      </div>
+
+                      {/* 스케줄 정보 표시 - 항상 표시 */}
+                      <div className="mt-3 p-3 bg-white rounded border">
+                        <div className="font-medium text-sm mb-2 flex items-center gap-2">
+                          <Clock className="w-4 h-4" />
+                          비율 스케줄링 현황
+                        </div>
+                        {currentServiceCanaryDeployment.ratioSchedules && currentServiceCanaryDeployment.ratioSchedules.length > 0 ? (
+                          <div>
+                            <div className="text-xs text-green-600 mb-2 font-medium">
+                              ✅ {currentServiceCanaryDeployment.ratioSchedules.length}개의 스케줄이 활성화되어 있습니다
+                            </div>
+                            {/* 실제 스케줄 설정값들 표시 */}
+                            <div className="text-xs text-gray-600 space-y-1 bg-gray-50 p-2 rounded">
+                              <div className="font-medium text-blue-600 mb-2">⏰ 스케줄 설정값:</div>
+                              {currentServiceCanaryDeployment.ratioSchedules
+                                .map((schedule: {triggerTime?: number; delayMs?: number; newRatio: number}) => {
+                                  // 백엔드에서 triggerTime으로 올 경우 처리
+                                  const displayTime = schedule.triggerTime && schedule.triggerTime > 0
+                                    ? new Date(schedule.triggerTime).toLocaleString()
+                                    : formatDelay(schedule.delayMs || 0);
+                                  return { ...schedule, displayTime };
+                                })
+                                .sort((a: {triggerTime?: number; delayMs?: number}, b: {triggerTime?: number; delayMs?: number}) => {
+                                  // triggerTime이 있으면 그걸로, 없으면 delayMs로 정렬
+                                  const timeA = a.triggerTime || a.delayMs || 0;
+                                  const timeB = b.triggerTime || b.delayMs || 0;
+                                  return timeA - timeB;
+                                })
+                                .map((schedule: {displayTime: string; newRatio: number; triggerTime?: number; delayMs?: number}, index: number) => (
+                                  <div key={index} className="flex justify-between items-center bg-white p-2 rounded border-l-2 border-blue-300">
+                                    <div className="flex flex-col">
+                                      <span className="text-xs text-gray-700">📅 실행 시간: {schedule.displayTime}</span>
+                                      {schedule.triggerTime && (
+                                        <span className="text-xs text-gray-500">triggerTime: {schedule.triggerTime}</span>
+                                      )}
+                                      {schedule.delayMs && (
+                                        <span className="text-xs text-gray-500">delayMs: {schedule.delayMs}ms</span>
+                                      )}
+                                    </div>
+                                    <span className="font-medium text-orange-600">→ {schedule.newRatio}%</span>
+                                  </div>
+                                ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div>
+                            <div className="text-xs text-gray-500 mb-2">
+                              ⚪ 자동 스케줄 없음 (수동 관리)
+                            </div>
+                            <div className="text-xs text-gray-400 bg-gray-50 p-2 rounded">
+                              📝 스케줄 설정값: 없음<br />
+                              💡 새 배포 시 시간별 비율 변경을 설정할 수 있습니다.
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       {/* 비율 수정 슬라이더 */}
@@ -875,9 +1082,26 @@ export default function CanaryDeployPage() {
                           size="sm"
                           onClick={() => {
                             setCanaryRatio([currentServiceCanaryDeployment.ratio]);
+                            // 기존 스케줄도 복원
+                            if (currentServiceCanaryDeployment.ratioSchedules && currentServiceCanaryDeployment.ratioSchedules.length > 0) {
+                              const convertedSchedules: RatioSchedule[] = currentServiceCanaryDeployment.ratioSchedules.map((schedule) => {
+                                // triggerTime이 절대 시간인 경우 상대 시간으로 변환
+                                const currentTime = Date.now();
+                                const delayMs = schedule.triggerTime ? Math.max(0, schedule.triggerTime - currentTime) : (schedule.delayMs || 0);
+                                return {
+                                  delayMs: delayMs,
+                                  newRatio: schedule.newRatio
+                                };
+                              });
+                              setRatioSchedules(convertedSchedules);
+                              setEnableSchedule(true);
+                            } else {
+                              setRatioSchedules([]);
+                              setEnableSchedule(false);
+                            }
                           }}
                         >
-                          현재 비율로 복원
+                          현재 설정으로 복원
                         </Button>
                       </div>
                     </div>
@@ -903,7 +1127,7 @@ export default function CanaryDeployPage() {
                   {currentCanaryDeployments.map((canaryDeployment, index) => (
                     <Card key={index} className="p-4 bg-blue-50">
                       <div className="flex justify-between items-start">
-                        <div>
+                        <div className="flex-1">
                           <h4 className="font-medium mb-2">
                             Service: {canaryDeployment.name} (ID: {canaryDeployment.id})
                           </h4>
@@ -919,6 +1143,63 @@ export default function CanaryDeployPage() {
                           <p className="text-sm text-gray-600 mb-2">
                             버전: {canaryDeployment.commitHash ? canaryDeployment.commitHash.join(', ') : 'N/A'}
                           </p>
+                          
+                          {/* 스케줄 정보 표시 - 항상 표시 */}
+                          <div className="mt-2 p-3 bg-white rounded border">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Clock className="w-4 h-4 text-blue-500" />
+                              <span className="text-sm font-medium">비율 스케줄링 상태</span>
+                            </div>
+                            {canaryDeployment.ratioSchedules && canaryDeployment.ratioSchedules.length > 0 ? (
+                              <div>
+                                <div className="text-xs text-green-600 mb-3 font-medium">
+                                  ✅ {canaryDeployment.ratioSchedules.length}개의 스케줄이 활성화되어 있습니다
+                                </div>
+                                {/* 실제 스케줄 설정값들 표시 */}
+                                <div className="text-xs text-gray-600 space-y-1 bg-gray-50 p-2 rounded">
+                                  <div className="font-medium text-blue-600 mb-2">⏰ 스케줄 설정값:</div>
+                                  {canaryDeployment.ratioSchedules
+                                    .map((schedule: {triggerTime?: number; delayMs?: number; newRatio: number}) => {
+                                      // 백엔드에서 triggerTime으로 올 경우 처리
+                                      const displayTime = schedule.triggerTime && schedule.triggerTime > 0
+                                        ? new Date(schedule.triggerTime).toLocaleString()
+                                        : formatDelay(schedule.delayMs || 0);
+                                      return { ...schedule, displayTime };
+                                    })
+                                    .sort((a: {triggerTime?: number; delayMs?: number}, b: {triggerTime?: number; delayMs?: number}) => {
+                                      // triggerTime이 있으면 그걸로, 없으면 delayMs로 정렬
+                                      const timeA = a.triggerTime || a.delayMs || 0;
+                                      const timeB = b.triggerTime || b.delayMs || 0;
+                                      return timeA - timeB;
+                                    })
+                                    .map((schedule: {displayTime: string; newRatio: number; triggerTime?: number; delayMs?: number}, index: number) => (
+                                      <div key={index} className="flex justify-between items-center bg-white p-2 rounded border-l-2 border-blue-300">
+                                        <div className="flex flex-col">
+                                          <span className="text-xs text-gray-700">📅 실행 시간: {schedule.displayTime}</span>
+                                          {schedule.triggerTime && (
+                                            <span className="text-xs text-gray-500">triggerTime: {schedule.triggerTime}</span>
+                                          )}
+                                          {schedule.delayMs && (
+                                            <span className="text-xs text-gray-500">delayMs: {schedule.delayMs}ms</span>
+                                          )}
+                                        </div>
+                                        <span className="font-medium text-orange-600">→ {schedule.newRatio}%</span>
+                                      </div>
+                                    ))}
+                                </div>
+                              </div>
+                            ) : (
+                              <div>
+                                <div className="text-xs text-gray-500 mb-2">
+                                  ⚪ 자동 스케줄 없음 (수동 관리)
+                                </div>
+                                <div className="text-xs text-gray-400 bg-gray-50 p-2 rounded">
+                                  📝 스케줄 설정값: 없음<br />
+                                  💡 새 배포 시 시간별 비율 변경을 설정할 수 있습니다.
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         </div>
                         <Button 
                           variant="destructive" 
