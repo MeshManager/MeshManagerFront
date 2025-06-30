@@ -413,7 +413,7 @@ export default function DeployPage() {
         name: selectedService,
         namespace: selectedNamespace,
         serviceType: "StandardType", // 일반 배포용
-        ratio: null, // 일반 배포에서는 ratio를 null로 설정
+        ratio: 100, // 일반 배포에서는 ratio를 null로 설정
         commitHash: [selectedVersion] // 배포할 버전을 배열로 전달
       };
 
