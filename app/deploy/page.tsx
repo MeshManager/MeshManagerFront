@@ -101,14 +101,19 @@ export default function DeployPage() {
       
       const result = await response.json();
       
-      if (result.success && result.data && Array.isArray(result.data.serviceEntityID) && result.data.serviceEntityID.length > 0) {
-        const entityDetailsPromises = result.data.serviceEntityID.map(async (entityId: number) => {
+      // API 응답 구조 수정: result.result.serviceEntityID 형태로 변경  
+      const serviceEntityIDs = result?.result?.serviceEntityID || result?.data?.serviceEntityID || [];
+      
+      if (Array.isArray(serviceEntityIDs) && serviceEntityIDs.length > 0) {
+        const entityDetailsPromises = serviceEntityIDs.map(async (entityId: number) => {
           try {
             const entityResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${entityId}`);
             if (entityResponse.ok) {
               const entityResult = await entityResponse.json();
-              if (entityResult.success) {
-                return { id: entityId, ...entityResult.data };
+              // API 응답 구조 수정: result 또는 data에서 엔티티 데이터 추출
+              const entityData = entityResult?.result || entityResult?.data;
+              if (entityData) {
+                return { id: entityId, ...entityData };
               }
             }
           } catch (error) {
@@ -154,24 +159,29 @@ export default function DeployPage() {
       const result = await response.json();
       console.log('배포 목록 API 응답:', JSON.stringify(result, null, 2));
       
-      if (result.success && result.data && Array.isArray(result.data.serviceEntityID) && result.data.serviceEntityID.length > 0) {
-        console.log('ServiceEntity ID 목록:', result.data.serviceEntityID);
+      // API 응답 구조 수정: result.result.serviceEntityID 형태로 변경
+      const serviceEntityIDs = result?.result?.serviceEntityID || result?.data?.serviceEntityID || [];
+      
+      if (Array.isArray(serviceEntityIDs) && serviceEntityIDs.length > 0) {
+        console.log('ServiceEntity ID 목록:', serviceEntityIDs);
         
-        const entityDetailsPromises = result.data.serviceEntityID.map(async (entityId: number) => {
+        const entityDetailsPromises = serviceEntityIDs.map(async (entityId: number) => {
           try {
             const entityUrl = `${crdApiUrl}/api/v1/crd/service/${entityId}`;
             console.log(`Entity ${entityId} 상세 조회 URL:`, entityUrl);
             
             const entityResponse = await fetch(entityUrl);
-            if (entityResponse.ok) {
-              const entityResult = await entityResponse.json();
-              console.log(`Entity ${entityId} 상세 응답:`, JSON.stringify(entityResult, null, 2));
-              
-              if (entityResult.success) {
-                const entityData = { id: entityId, ...entityResult.data };
-                console.log(`Entity ${entityId} 처리된 데이터:`, entityData);
-                return entityData;
-              }
+                          if (entityResponse.ok) {
+                const entityResult = await entityResponse.json();
+                console.log(`Entity ${entityId} 상세 응답:`, JSON.stringify(entityResult, null, 2));
+                
+                // API 응답 구조 수정: result 또는 data에서 엔티티 데이터 추출
+                const entityData = entityResult?.result || entityResult?.data;
+                if (entityData) {
+                  const processedData = { id: entityId, ...entityData };
+                  console.log(`Entity ${entityId} 처리된 데이터:`, processedData);
+                  return processedData;
+                }
             } else {
               console.error(`Entity ${entityId} 조회 실패:`, entityResponse.status, entityResponse.statusText);
             }
