@@ -11,17 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Input } from '@/components/ui/input';
 import { Loader2 } from "lucide-react";
 
-interface ContainerInfo {
-  name: string;
-  image: string;
-}
 
-interface DeploymentInfo {
-  name: string;
-  containers: ContainerInfo[];
-  podLabels: Record<string, string>;
-  replicas: number;
-}
 
 interface NamespaceListResponse {
   namespaces: string[];
