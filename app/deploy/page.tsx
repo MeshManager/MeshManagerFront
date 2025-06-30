@@ -24,7 +24,6 @@ interface ServiceNameListResponse {
 interface ClusterInfo {
   uuid: string;
   name: string;
-  agentConnected?: boolean;
 }
 
 function SidebarToggleButton() {
@@ -76,11 +75,7 @@ export default function DeployPage() {
         }
         const result = await response.json();
         if (result && result.data) {
-          const clustersWithAgent = result.data.map((cluster: ClusterInfo) => ({
-            ...cluster,
-            agentConnected: cluster.agentConnected ?? false
-          }));
-          setClusters(clustersWithAgent);
+          setClusters(result.data);
         } else {
           setClusters([]);
         }
@@ -260,7 +255,7 @@ export default function DeployPage() {
                   <SelectContent>
                     {clusters.map((cluster) => (
                       <SelectItem key={cluster.uuid} value={cluster.uuid}>
-                        {cluster.name} {cluster.agentConnected ? '(연결됨)' : '(연결 안됨)'}
+                        {cluster.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
