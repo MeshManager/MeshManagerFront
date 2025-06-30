@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,10 +8,23 @@ import { Button } from '@/components/ui/button';
 import { SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
 import { Loader2 } from "lucide-react";
 
+interface ContainerInfo {
+  name: string;
+  image: string;
+}
 
+interface DeploymentInfo {
+  name: string;
+  containers: ContainerInfo[];
+  podLabels: Record<string, string>;
+  replicas: number;
+}
+
+interface DeploymentListResponse {
+  data: DeploymentInfo[];
+}
 
 interface NamespaceListResponse {
   namespaces: string[];
@@ -24,6 +37,17 @@ interface ServiceNameListResponse {
 interface ClusterInfo {
   uuid: string;
   name: string;
+}
+
+interface DeploymentEntity {
+  id: number;
+  name: string;
+  namespace: string;
+  serviceType: string;
+  ratio: number;
+  commitHash: string[];
+  darknessReleaseID?: number;
+  dependencyID?: number[];
 }
 
 function SidebarToggleButton() {
@@ -53,8 +77,138 @@ export default function DeployPage() {
   const [selectedNamespace, setSelectedNamespace] = useState<string | null>(null);
   const [availableServices, setAvailableServices] = useState<string[]>([]);
   const [selectedService, setSelectedService] = useState<string | null>(null);
-  const [deployVersion, setDeployVersion] = useState<string>('');
+  const [availableVersions, setAvailableVersions] = useState<string[]>([]);
+  const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
   const [isDeploying, setIsDeploying] = useState<boolean>(false);
+  const [currentDeployments, setCurrentDeployments] = useState<DeploymentEntity[]>([]);
+
+  // CRD API URL 정의
+  const crdApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CRD || 'http://localhost:8084';
+
+  // 현재 배포 목록을 조회하여 반환하는 함수
+  const getCurrentDeployments = useCallback(async (): Promise<DeploymentEntity[]> => {
+    if (!selectedClusterUuid) {
+      return [];
+    }
+    
+    try {
+      const response = await fetch(`${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/list`);
+      
+      if (!response.ok) {
+        console.error('현재 배포 목록 조회 실패');
+        return [];
+      }
+      
+      const result = await response.json();
+      
+      if (result.success && result.data && Array.isArray(result.data.serviceEntityID) && result.data.serviceEntityID.length > 0) {
+        const entityDetailsPromises = result.data.serviceEntityID.map(async (entityId: number) => {
+          try {
+            const entityResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${entityId}`);
+            if (entityResponse.ok) {
+              const entityResult = await entityResponse.json();
+              if (entityResult.success) {
+                return { id: entityId, ...entityResult.data };
+              }
+            }
+          } catch (error) {
+            console.error(`Entity ${entityId} 조회 실패:`, error);
+          }
+          return null;
+        });
+        
+        const details = await Promise.all(entityDetailsPromises);
+        return details.filter(entity => entity !== null && entity.serviceType === 'StandardType') as DeploymentEntity[];
+      } else {
+        return [];
+      }
+    } catch (error) {
+      console.error("배포 목록 조회 중 오류 발생:", error);
+      return [];
+    }
+  }, [selectedClusterUuid, crdApiUrl]);
+
+  // 현재 배포 목록을 조회하는 함수 (useCallback으로 메모이제이션)
+  const fetchCurrentDeployments = useCallback(async () => {
+    console.log('=== fetchCurrentDeployments 시작 ===');
+    console.log('selectedClusterUuid:', selectedClusterUuid);
+    
+    if (!selectedClusterUuid) {
+      console.log('클러스터가 선택되지 않아 배포 목록 초기화');
+      setCurrentDeployments([]);
+      return;
+    }
+    
+    try {
+      const url = `${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/list`;
+      console.log('배포 목록 조회 URL:', url);
+      
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        console.error('현재 배포 목록 조회 실패:', response.status, response.statusText);
+        setCurrentDeployments([]);
+        return;
+      }
+      
+      const result = await response.json();
+      console.log('배포 목록 API 응답:', JSON.stringify(result, null, 2));
+      
+      if (result.success && result.data && Array.isArray(result.data.serviceEntityID) && result.data.serviceEntityID.length > 0) {
+        console.log('ServiceEntity ID 목록:', result.data.serviceEntityID);
+        
+        const entityDetailsPromises = result.data.serviceEntityID.map(async (entityId: number) => {
+          try {
+            const entityUrl = `${crdApiUrl}/api/v1/crd/service/${entityId}`;
+            console.log(`Entity ${entityId} 상세 조회 URL:`, entityUrl);
+            
+            const entityResponse = await fetch(entityUrl);
+            if (entityResponse.ok) {
+              const entityResult = await entityResponse.json();
+              console.log(`Entity ${entityId} 상세 응답:`, JSON.stringify(entityResult, null, 2));
+              
+              if (entityResult.success) {
+                const entityData = { id: entityId, ...entityResult.data };
+                console.log(`Entity ${entityId} 처리된 데이터:`, entityData);
+                return entityData;
+              }
+            } else {
+              console.error(`Entity ${entityId} 조회 실패:`, entityResponse.status, entityResponse.statusText);
+            }
+          } catch (error) {
+            console.error(`Entity ${entityId} 조회 실패:`, error);
+          }
+          return null;
+        });
+        
+        Promise.all(entityDetailsPromises).then(details => {
+          console.log('모든 Entity 상세 데이터:', details);
+          
+          const validEntities = details.filter(entity => entity !== null);
+          console.log('Valid entities (null 제외):', validEntities);
+          
+          const standardTypeEntities = validEntities.filter(entity => entity.serviceType === 'StandardType');
+          console.log('StandardType entities:', standardTypeEntities);
+          
+          setCurrentDeployments(standardTypeEntities as DeploymentEntity[]);
+          console.log('최종 설정된 배포 목록:', standardTypeEntities);
+        });
+      } else {
+        console.log('조건에 맞지 않는 응답 구조:', {
+          success: result.success,
+          hasData: !!result.data,
+          hasServiceEntityID: result.data && Array.isArray(result.data.serviceEntityID),
+          serviceEntityIDLength: result.data?.serviceEntityID?.length || 0
+        });
+        setCurrentDeployments([]);
+      }
+    } catch (error) {
+      console.error("배포 목록 조회 중 오류 발생:", error);
+      setCurrentDeployments([]);
+    }
+    
+    console.log('=== fetchCurrentDeployments 종료 ===');
+  }, [selectedClusterUuid, setCurrentDeployments, crdApiUrl]);
 
   useEffect(() => {
     if (!isLoading && !isLoggedIn) {
@@ -143,12 +297,59 @@ export default function DeployPage() {
     fetchServices();
   }, [selectedClusterUuid, selectedNamespace]);
 
+  // 선택된 서비스에 따라 디플로이먼트 정보 및 버전 업데이트
+  useEffect(() => {
+    const fetchDeployments = async () => {
+      if (!selectedClusterUuid || !selectedNamespace || !selectedService) {
+        setAvailableVersions([]);
+        setSelectedVersion(null);
+        return;
+      }
+      
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CLUSTER || 'http://localhost:8082';
+        const response = await fetch(`${apiUrl}/api/v1/cluster/deployments?clusterId=${selectedClusterUuid}&namespace=${selectedNamespace}&serviceName=${selectedService}`);
+        if (!response.ok) throw new Error('디플로이먼트 정보를 불러오는데 실패했습니다.');
+        
+        const data: DeploymentListResponse = await response.json();
+        
+        // 컨테이너 이미지 태그에서 version 추출
+        const versions = new Set<string>();
+        if (data.data && Array.isArray(data.data)) {
+          data.data.forEach((deployment) => {
+            if (deployment.containers && Array.isArray(deployment.containers)) {
+              deployment.containers.forEach((container) => {
+                if (container.image) {
+                  const imageTag = container.image.split(':')[1] || 'latest';
+                  versions.add(imageTag);
+                }
+              });
+            }
+          });
+        }
+        
+        setAvailableVersions(Array.from(versions));
+        setSelectedVersion(null);
+      } catch (error) {
+        console.error('디플로이먼트 정보를 불러오는데 실패했습니다:', error);
+        setAvailableVersions([]);
+      }
+    };
+
+    fetchDeployments();
+  }, [selectedClusterUuid, selectedNamespace, selectedService]);
+
+  // 현재 배포 목록을 조회하는 useEffect
+  useEffect(() => {
+    fetchCurrentDeployments();
+  }, [fetchCurrentDeployments]);
+
   const handleLogout = () => {
     logout();
   };
 
   const handleDeploy = async () => {
-    if (!selectedClusterUuid || !selectedNamespace || !selectedService || !deployVersion.trim()) {
+    if (!selectedClusterUuid || !selectedNamespace || !selectedService || !selectedVersion) {
       alert("모든 필드를 선택/입력해주세요.");
       return;
     }
@@ -156,23 +357,61 @@ export default function DeployPage() {
     setIsDeploying(true);
 
     try {
-      // CRD 서비스 API URL
-      const crdApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CRD || 'http://localhost:8084';
+      // 1단계: 최신 배포 목록 조회 후 기존 StandardType 배포 확인
+      const latestDeployments = await getCurrentDeployments();
       
-      // Service Entity 생성 요청 데이터
+      // 1-2단계: 같은 서비스의 기존 StandardType 배포가 있는지 확인하고 삭제
+      const existingDeployment = latestDeployments.find(
+        (deployment: DeploymentEntity) => 
+          deployment.name === selectedService && 
+          deployment.namespace === selectedNamespace &&
+          deployment.serviceType === 'StandardType'
+      );
+
+      if (existingDeployment) {
+        const confirmReplace = confirm(
+          `'${selectedService}' 서비스에 이미 배포가 존재합니다.\n` +
+          `기존 배포 (버전: ${existingDeployment.commitHash?.join(', ') || 'N/A'})를 ` +
+          `새 배포 (버전: ${selectedVersion})로 교체하시겠습니까?`
+        );
+        
+        if (!confirmReplace) {
+          setIsDeploying(false);
+          return;
+        }
+        
+        console.log('기존 StandardType 배포 발견, 삭제 진행:', existingDeployment);
+        
+        const deleteResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${existingDeployment.id}`, {
+          method: 'DELETE',
+        });
+
+        if (!deleteResponse.ok) {
+          const errorText = await deleteResponse.text();
+          throw new Error(`기존 배포 삭제 실패: ${deleteResponse.status} - ${errorText}`);
+        }
+
+        const deleteResult = await deleteResponse.json();
+        console.log('기존 배포 삭제 완료:', deleteResult);
+        
+        // 삭제 후 잠시 대기 (백엔드 처리 시간)
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      
+      // 2단계: 새로운 Service Entity 생성 요청 데이터
       const serviceEntityData = {
         name: selectedService,
         namespace: selectedNamespace,
         serviceType: "StandardType", // 일반 배포용
         ratio: null, // 일반 배포에서는 ratio를 null로 설정
-        commitHash: [deployVersion] // 배포할 버전을 배열로 전달
+        commitHash: [selectedVersion] // 배포할 버전을 배열로 전달
       };
 
       console.log("배포 시작:", {
         cluster: selectedClusterUuid,
         namespace: selectedNamespace,
         service: selectedService,
-        version: deployVersion,
+        version: selectedVersion,
         requestData: serviceEntityData
       });
 
@@ -192,14 +431,39 @@ export default function DeployPage() {
 
       const result = await response.json();
       
-      if (result.success) {
-        alert(`배포가 성공적으로 완료되었습니다!\nService Entity ID: ${result.data.id}`);
+      console.log("배포 API 응답 전체:", JSON.stringify(result, null, 2));
+      
+      // 응답 구조 확인 후 적절히 처리
+      if (result.success === true || result.success === "true" || (result.data && result.data.id)) {
+        const successMessage = existingDeployment 
+          ? `배포가 성공적으로 교체되었습니다!\n이전 배포를 삭제하고 새 배포를 생성했습니다.\nService Entity ID: ${result.data?.id || 'N/A'}`
+          : `배포가 성공적으로 완료되었습니다!\nService Entity ID: ${result.data?.id || 'N/A'}`;
+        alert(successMessage);
         console.log("배포 성공:", result);
         
         // 폼 초기화
-        setDeployVersion('');
+        setSelectedVersion(null);
+        
+        // 배포 목록 새로고침
+        await fetchCurrentDeployments();
       } else {
-        throw new Error(result.message || "배포 처리 중 오류가 발생했습니다.");
+        // 성공 메시지가 포함된 경우에도 성공으로 처리
+        const message = result.message || result.msg || "";
+        if (message.includes("성공") || message.includes("success")) {
+          const successMessage = existingDeployment 
+            ? `배포가 성공적으로 교체되었습니다!\n이전 배포를 삭제하고 새 배포를 생성했습니다.\n메시지: ${message}`
+            : `배포가 완료되었습니다!\n메시지: ${message}`;
+          alert(successMessage);
+          console.log("배포 성공 (메시지 기반):", result);
+          
+          // 폼 초기화
+          setSelectedVersion(null);
+          
+          // 배포 목록 새로고침
+          await fetchCurrentDeployments();
+        } else {
+          throw new Error(message || "배포 처리 중 오류가 발생했습니다.");
+        }
       }
       
     } catch (error) {
@@ -213,6 +477,46 @@ export default function DeployPage() {
       alert(errorMessage);
     } finally {
       setIsDeploying(false);
+    }
+  };
+
+  const handleDeploymentDelete = async (deployment: DeploymentEntity) => {
+    if (!confirm(`'${deployment.name}' 배포를 삭제하시겠습니까?`)) {
+      return;
+    }
+
+    try {
+      console.log('배포 삭제 시도:', deployment);
+      
+      const response = await fetch(`${crdApiUrl}/api/v1/crd/service/${deployment.id}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`배포 삭제 실패: ${response.status} - ${errorText}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.success) {
+        alert('배포가 성공적으로 삭제되었습니다.');
+        console.log('배포 삭제 성공:', result);
+        
+        // 배포 목록 새로고침
+        await fetchCurrentDeployments();
+      } else {
+        throw new Error(result.message || '배포 삭제 중 오류가 발생했습니다.');
+      }
+    } catch (error) {
+      console.error('배포 삭제 중 오류 발생:', error);
+      
+      let errorMessage = '배포 삭제 중 오류가 발생했습니다.';
+      if (error instanceof Error) {
+        errorMessage = `배포 삭제 실패: ${error.message}`;
+      }
+      
+      alert(errorMessage);
     }
   };
 
@@ -307,20 +611,73 @@ export default function DeployPage() {
               {/* 배포할 버전 */}
               <div className="space-y-2">
                 <label className="text-sm font-medium">배포할 버전</label>
-                <Input
-                  type="text"
-                  value={deployVersion}
-                  onChange={(e) => setDeployVersion(e.target.value)}
-                  placeholder="예: v1.2.3, latest, main-abc123"
-                />
+                <Select 
+                  value={selectedVersion || ''} 
+                  onValueChange={setSelectedVersion}
+                  disabled={!selectedService}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="버전을 선택하세요" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableVersions.map((version) => (
+                      <SelectItem key={version} value={version}>
+                        {version}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
+              {/* 현재 배포 목록 섹션 */}
+              {selectedClusterUuid && (
+                <div className="mt-6 space-y-4">
+                  <hr className="my-4" />
+                  <h3 className="text-lg font-semibold">현재 배포 목록</h3>
+                  
+                  {currentDeployments.length > 0 ? (
+                    currentDeployments.map((deployment, index) => (
+                      <Card key={index} className="p-4 bg-green-50">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h4 className="font-medium mb-2">
+                              Service: {deployment.name} (ID: {deployment.id})
+                            </h4>
+                            <p className="text-sm text-gray-600 mb-1">
+                              네임스페이스: {deployment.namespace}
+                            </p>
+                            <p className="text-sm text-gray-600 mb-1">
+                              타입: {deployment.serviceType}
+                            </p>
+                            <p className="text-sm text-gray-600 mb-2">
+                              버전: {deployment.commitHash ? deployment.commitHash.join(', ') : 'N/A'}
+                            </p>
+                          </div>
+                          <Button 
+                            variant="destructive" 
+                            size="sm"
+                            onClick={() => handleDeploymentDelete(deployment)}
+                          >
+                            삭제
+                          </Button>
+                        </div>
+                      </Card>
+                    ))
+                  ) : (
+                    <Card className="p-4 bg-gray-50">
+                      <p className="text-center text-gray-500">
+                        현재 StandardType 배포가 없습니다.
+                      </p>
+                    </Card>
+                  )}
+                </div>
+              )}
+
               {/* 배포 버튼 */}
-              <div className="flex justify-center pt-4">
+              <div className="flex justify-end gap-2">
                 <Button 
                   onClick={handleDeploy} 
-                  disabled={isDeploying || !selectedClusterUuid || !selectedNamespace || !selectedService || !deployVersion.trim()}
-                  className="w-full max-w-sm"
+                  disabled={isDeploying || !selectedClusterUuid || !selectedNamespace || !selectedService || !selectedVersion}
                 >
                   {isDeploying ? (
                     <>
@@ -328,7 +685,7 @@ export default function DeployPage() {
                       배포 중...
                     </>
                   ) : (
-                    "배포하기"
+                    "배포"
                   )}
                 </Button>
               </div>
