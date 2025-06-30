@@ -172,12 +172,31 @@ function ClusterDetailContent() {
         const data: DeploymentListResponse = await response.json();
         
         if (data.data.length > 0) {
-          const deployment = data.data[0];
+          // 모든 deployment의 모든 컨테이너를 수집
+          const allContainers: ContainerInfo[] = [];
+          let totalReplicas = 0;
+          const allPodLabels: Record<string, string> = {};
+
+          data.data.forEach(deployment => {
+            // 모든 컨테이너 수집
+            if (deployment.containers) {
+              allContainers.push(...deployment.containers);
+            }
+            
+            // 레플리카 수 합산
+            totalReplicas += deployment.replicas || 0;
+            
+            // Pod 라벨 합치기
+            if (deployment.podLabels) {
+              Object.assign(allPodLabels, deployment.podLabels);
+            }
+          });
+
           setClusterDetail(prev => prev ? {
             ...prev,
-            containers: deployment.containers,
-            podLabels: deployment.podLabels,
-            replicaCount: deployment.replicas
+            containers: allContainers,
+            podLabels: allPodLabels,
+            replicaCount: totalReplicas
           } : null);
         }
       } catch (error) {
@@ -286,15 +305,23 @@ function ClusterDetailContent() {
           </div>
           {clusterDetail.containers && clusterDetail.containers.length > 0 && (
             <div>
-              <h3 className="text-lg font-semibold mt-4 mb-2">컨테이너 정보</h3>
-              <ul className="list-disc pl-5 space-y-1">
+              <h3 className="text-lg font-semibold mt-4 mb-2">컨테이너 정보 ({clusterDetail.containers.length}개)</h3>
+              <div className="space-y-3">
                 {clusterDetail.containers.map((container, index) => (
-                  <React.Fragment key={index}>
-                    <li>이름: {container.name}</li>
-                    <li>이미지: {container.image}</li>
-                  </React.Fragment>
+                  <div key={index} className="border-l-4 border-blue-500 pl-4 py-2 bg-gray-50 rounded-r">
+                    <p><strong>컨테이너 #{index + 1}</strong></p>
+                    <p><strong>이름:</strong> {container.name}</p>
+                    <p><strong>이미지:</strong> <code className="bg-gray-200 px-2 py-1 rounded text-sm">{container.image}</code></p>
+                  </div>
                 ))}
-              </ul>
+              </div>
+            </div>
+          )}
+
+          {clusterDetail.replicaCount !== undefined && (
+            <div>
+              <h3 className="text-lg font-semibold mt-4 mb-2">레플리카 정보</h3>
+              <p><strong>총 레플리카 수:</strong> {clusterDetail.replicaCount}</p>
             </div>
           )}
 

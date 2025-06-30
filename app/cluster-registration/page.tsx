@@ -30,6 +30,8 @@ function ClusterRegistrationPage() {
   const [agentInstallCommand, setAgentInstallCommand] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
   const [isDuplicateChecked, setIsDuplicateChecked] = useState(false);
+  const [isAgentConnected, setIsAgentConnected] = useState(false);
+  const [isCheckingAgent, setIsCheckingAgent] = useState(false);
 
   useEffect(() => {
     // 페이지 로드 시 토큰 자동 생성
@@ -146,7 +148,7 @@ function ClusterRegistrationPage() {
       console.log('클러스터 등록 성공:', result);
       
       // Agent 설치 명령어 형식 변경: make deploy 명령
-      const agentCommand = `make deploy IMG=public.ecr.aws/j8f1l6o6/mesh-agent:v4 UUID="${result.uuid}" AGENT_NAME="${clusterName}" AGENT_URL="https://www.meshmanagers.com/api/v1/agent" DESIRED_STATE_URL="https://www.meshmanagers.com/api/v1/crd" CLUSTER_MANAGEMENT_URL="https://www.meshmanagers.com/api/v1/management/clusters"`;
+      const agentCommand = `make deploy IMG=public.ecr.aws/j8f1l6o6/mesh-agent:v4 UUID="${result.uuid}" AGENT_NAME="${clusterName}" AGENT_URL="https://www.meshmanagers.com/api/v1/agent" DESIRED_STATE_URL="https://www.meshmanagers.com/api/v1/crd" CLUSTER_MANAGEMENT_URL="https://www.meshmanagers.com/api/v1/management/clusters" SLACK_WEB_HOOK_URL="${prometheusUrl}"`;
 
       setAgentInstallCommand(agentCommand);
       setShowCommandDialog(true);
@@ -170,7 +172,65 @@ function ClusterRegistrationPage() {
     alert("명령어가 복사되었습니다!");
   };
 
+  // 에이전트 연결 상태를 확인하는 함수 - 메인페이지와 동일한 방식 사용
+  const checkAgentConnection = async (clusterName: string) => {
+    try {
+      const agentApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_AGENT || 'http://localhost:8081';
+      
+      // AbortController로 timeout 설정 (5초)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      const agentResponse = await fetch(`${agentApiUrl}/api/v1/agent/connected`, {
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (agentResponse.ok) {
+        const connectedAgents = await agentResponse.json();
+        return connectedAgents.includes(clusterName);
+      }
+      
+      return false;
+    } catch (error) {
+      const errorMessage = error instanceof Error && error.name === 'AbortError' ? 'Timeout' : error;
+      console.error('에이전트 연결 상태 확인 중 오류:', errorMessage);
+      return false;
+    }
+  };
 
+  // 에이전트 연결을 주기적으로 확인하는 useEffect
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout | null = null;
+    
+    if (clusterName && isRegistering && !isAgentConnected) {
+      setIsCheckingAgent(true);
+      
+      intervalId = setInterval(async () => {
+        const connected = await checkAgentConnection(clusterName);
+        
+        if (connected) {
+          setIsAgentConnected(true);
+          setIsRegistering(false);
+          setIsCheckingAgent(false);
+          
+          if (intervalId) {
+            clearInterval(intervalId);
+          }
+        }
+      }, 5000); // 5초마다 확인
+    }
+    
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [clusterName, isRegistering, isAgentConnected]);
 
   const handleClusterNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setClusterName(e.target.value);
@@ -183,6 +243,11 @@ function ClusterRegistrationPage() {
 
   const handleLogout = () => {
     logout();
+  };
+
+  // 메인페이지로 이동하는 함수
+  const handleGoToMainPage = () => {
+    router.push('/');
   };
 
   if (isLoading) {
@@ -231,14 +296,14 @@ function ClusterRegistrationPage() {
               </div>
 
               <div>
-                <label htmlFor="prometheus-url" className="block text-sm font-medium text-gray-700">프로메테우스 URL</label>
+                <label htmlFor="prometheus-url" className="block text-sm font-medium text-gray-700">슬랙 URL</label>
                 <div className="mt-1">
                   <Input
                     id="prometheus-url"
                     type="url"
                     value={prometheusUrl}
                     onChange={handlePrometheusUrlChange}
-                    placeholder="http://prometheus.example.com"
+                    placeholder="https://hooks.slack.com/services/..."
                   />
                 </div>
               </div>
@@ -266,11 +331,17 @@ function ClusterRegistrationPage() {
               </div>
 
               <div className="flex justify-center space-x-4">
-                <Button onClick={handleRegisterCluster} disabled={isRegistering || clusterName.trim() === '' || prometheusUrl.trim() === '' || token.trim() === '' || !isDuplicateChecked}>
-                  {isRegistering ? (
+                <Button 
+                  onClick={isAgentConnected ? handleGoToMainPage : handleRegisterCluster} 
+                  disabled={(!isAgentConnected && (isRegistering || clusterName.trim() === '' || prometheusUrl.trim() === '' || token.trim() === '' || !isDuplicateChecked))}
+                  className={isAgentConnected ? "bg-green-600 hover:bg-green-700" : ""}
+                >
+                  {isAgentConnected ? (
+                    "등록완료"
+                  ) : isRegistering ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      로딩 중...
+                      {isCheckingAgent ? "에이전트 연결 확인 중..." : "로딩 중..."}
                     </>
                   ) : (
                     "등록하기"
