@@ -1,6 +1,6 @@
 'use client';
 
-import { Home, Package, Rocket, Settings } from "lucide-react"
+import { Home, Package, Rocket, Settings, Ship } from "lucide-react"
 import Link from "next/link";
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -26,9 +26,15 @@ const menuItems = [
     authRequired: false,
   },
   {
+    title: "Deploy",
+    url: "/deploy",
+    icon: Rocket,
+    authRequired: true,
+  },
+  {
     title: "Canary Deploy",
     url: "/canary-deploy",
-    icon: Rocket,
+    icon: Ship,
     authRequired: true,
   },
   {
