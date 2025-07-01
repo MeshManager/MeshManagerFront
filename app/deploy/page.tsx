@@ -85,53 +85,7 @@ export default function DeployPage() {
   // CRD API URL 정의
   const crdApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CRD || 'http://localhost:8084';
 
-  // 현재 배포 목록을 조회하여 반환하는 함수
-  const getCurrentDeployments = useCallback(async (): Promise<DeploymentEntity[]> => {
-    if (!selectedClusterUuid) {
-      return [];
-    }
-    
-    try {
-      const response = await fetch(`${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/list`);
-      
-      if (!response.ok) {
-        console.error('현재 배포 목록 조회 실패');
-        return [];
-      }
-      
-      const result = await response.json();
-      
-      // API 응답 구조 수정: result.result.serviceEntityID 형태로 변경  
-      const serviceEntityIDs = result?.result?.serviceEntityID || result?.data?.serviceEntityID || [];
-      
-      if (Array.isArray(serviceEntityIDs) && serviceEntityIDs.length > 0) {
-        const entityDetailsPromises = serviceEntityIDs.map(async (entityId: number) => {
-          try {
-            const entityResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${entityId}`);
-            if (entityResponse.ok) {
-              const entityResult = await entityResponse.json();
-              // API 응답 구조 수정: result 또는 data에서 엔티티 데이터 추출
-              const entityData = entityResult?.result || entityResult?.data;
-              if (entityData) {
-                return { id: entityId, ...entityData };
-              }
-            }
-          } catch (error) {
-            console.error(`Entity ${entityId} 조회 실패:`, error);
-          }
-          return null;
-        });
-        
-        const details = await Promise.all(entityDetailsPromises);
-        return details.filter(entity => entity !== null && entity.serviceType === 'StandardType') as DeploymentEntity[];
-      } else {
-        return [];
-      }
-    } catch (error) {
-      console.error("배포 목록 조회 중 오류 발생:", error);
-      return [];
-    }
-  }, [selectedClusterUuid, crdApiUrl]);
+
 
   // 현재 배포 목록을 조회하는 함수 (useCallback으로 메모이제이션)
   const fetchCurrentDeployments = useCallback(async () => {
@@ -367,21 +321,61 @@ export default function DeployPage() {
     setIsDeploying(true);
 
     try {
-      // 1단계: 최신 배포 목록 조회 후 기존 StandardType 배포 확인
-      const latestDeployments = await getCurrentDeployments();
+      // 1단계: 최신 배포 목록 조회 후 기존 배포 확인
+      console.log('🔍 1단계: 기존 배포 확인...');
+      let existingStandardDeployment = null;
+      let existingCanaryDeployments: DeploymentEntity[] = [];
       
-      // 1-2단계: 같은 서비스의 기존 StandardType 배포가 있는지 확인하고 삭제
-      const existingDeployment = latestDeployments.find(
-        (deployment: DeploymentEntity) => 
-          deployment.name === selectedService && 
-          deployment.namespace === selectedNamespace &&
-          deployment.serviceType === 'StandardType'
-      );
+      try {
+        const existingListResponse = await fetch(`${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/list`);
+        if (existingListResponse.ok) {
+          const existingListResult = await existingListResponse.json();
+          console.log('📋 기존 ServiceEntity 목록:', existingListResult);
+          
+          const serviceEntityIDs = existingListResult?.result?.serviceEntityID || existingListResult?.data?.serviceEntityID || [];
+          
+          if (Array.isArray(serviceEntityIDs) && serviceEntityIDs.length > 0) {
+            const entityCheckPromises = serviceEntityIDs.map(async (entityId: number) => {
+              try {
+                const entityResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${entityId}`);
+                if (entityResponse.ok) {
+                  const entityResult = await entityResponse.json();
+                  const entityData = entityResult?.result || entityResult?.data;
+                  
+                  if (entityData && 
+                      entityData.name === selectedService && 
+                      entityData.namespace === selectedNamespace) {
+                    
+                    if (entityData.serviceType === 'StandardType') {
+                      console.log(`✅ 기존 StandardType 배포 발견: ID ${entityId}`);
+                      return { id: entityId, ...entityData, type: 'StandardType' };
+                    } else if (entityData.serviceType === 'CanaryType' || entityData.serviceType === 'StickyCanaryType') {
+                      console.log(`🚀 기존 ${entityData.serviceType} 배포 발견: ID ${entityId}`);
+                      return { id: entityId, ...entityData, type: 'CanaryType' };
+                    }
+                  }
+                }
+              } catch (error) {
+                console.error(`❌ Entity ${entityId} 조회 실패:`, error);
+              }
+              return null;
+            });
+            
+            const foundEntities = (await Promise.all(entityCheckPromises)).filter(entity => entity !== null);
+            
+            existingStandardDeployment = foundEntities.find(entity => entity.type === 'StandardType');
+            existingCanaryDeployments = foundEntities.filter(entity => entity.type === 'CanaryType');
+          }
+        }
+      } catch (error) {
+        console.error('❌ 기존 배포 확인 중 오류:', error);
+      }
 
-      if (existingDeployment) {
+      // 1-2단계: 기존 StandardType 배포 교체 확인
+      if (existingStandardDeployment) {
         const confirmReplace = confirm(
-          `'${selectedService}' 서비스에 이미 배포가 존재합니다.\n` +
-          `기존 배포 (버전: ${existingDeployment.commitHash?.join(', ') || 'N/A'})를 ` +
+          `'${selectedService}' 서비스에 이미 일반 배포가 존재합니다.\n` +
+          `기존 배포 (버전: ${existingStandardDeployment.commitHash?.join(', ') || 'N/A'})를 ` +
           `새 배포 (버전: ${selectedVersion})로 교체하시겠습니까?`
         );
         
@@ -390,22 +384,66 @@ export default function DeployPage() {
           return;
         }
         
-        console.log('기존 StandardType 배포 발견, 삭제 진행:', existingDeployment);
+        console.log('🗑️ 기존 StandardType 배포 삭제 진행:', existingStandardDeployment);
         
-        const deleteResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${existingDeployment.id}`, {
+        const deleteResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${existingStandardDeployment.id}`, {
           method: 'DELETE',
         });
 
         if (!deleteResponse.ok) {
           const errorText = await deleteResponse.text();
-          throw new Error(`기존 배포 삭제 실패: ${deleteResponse.status} - ${errorText}`);
+          throw new Error(`기존 일반 배포 삭제 실패: ${deleteResponse.status} - ${errorText}`);
         }
 
         const deleteResult = await deleteResponse.json();
-        console.log('기존 배포 삭제 완료:', deleteResult);
+        console.log('✅ 기존 일반 배포 삭제 완료:', deleteResult);
         
         // 삭제 후 잠시 대기 (백엔드 처리 시간)
         await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
+      // 1-3단계: 기존 카나리 배포 삭제 (일반 배포와 카나리 배포는 동시에 존재할 수 없음)
+      if (existingCanaryDeployments.length > 0) {
+        const confirmDeleteCanary = confirm(
+          `'${selectedService}' 서비스에 카나리 배포가 존재합니다.\n` +
+          `일반 배포를 진행하기 위해 기존 카나리 배포를 삭제하시겠습니까?\n\n` +
+          `삭제할 카나리 배포:\n` +
+          existingCanaryDeployments.map(canary => 
+            `- ${canary.serviceType} (버전: ${canary.commitHash?.join(', ') || 'N/A'})`
+          ).join('\n')
+        );
+        
+        if (!confirmDeleteCanary) {
+          setIsDeploying(false);
+          return;
+        }
+        
+        console.log(`🗑️ ${existingCanaryDeployments.length}개의 카나리 배포 삭제 진행`);
+        
+        for (const canaryDeployment of existingCanaryDeployments) {
+          try {
+            console.log(`🗑️ 카나리 배포 삭제 시도: ID ${canaryDeployment.id}`);
+            const deleteResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${canaryDeployment.id}`, {
+              method: 'DELETE',
+            });
+
+            if (!deleteResponse.ok) {
+              const errorText = await deleteResponse.text();
+              console.error(`❌ 카나리 배포 ${canaryDeployment.id} 삭제 실패:`, errorText);
+              throw new Error(`카나리 배포 삭제 실패: ${deleteResponse.status} - ${errorText}`);
+            }
+
+            const deleteResult = await deleteResponse.json();
+            console.log(`✅ 카나리 배포 ${canaryDeployment.id} 삭제 완료:`, deleteResult);
+          } catch (error) {
+            console.error(`❌ 카나리 배포 ${canaryDeployment.id} 삭제 중 오류:`, error);
+            throw error;
+          }
+        }
+        
+        // 모든 카나리 배포 삭제 후 대기
+        console.log('⏳ 카나리 배포 삭제 완료 후 대기 중...');
+        await new Promise(resolve => setTimeout(resolve, 1500));
       }
       
       // 2단계: 새로운 Service Entity 생성 요청 데이터
@@ -445,7 +483,8 @@ export default function DeployPage() {
       
       // 응답 구조 확인 후 적절히 처리
       if (result.success === true || result.success === "true" || (result.data && result.data.id)) {
-        const successMessage = existingDeployment 
+        const hasExistingDeployment = existingStandardDeployment || existingCanaryDeployments.length > 0;
+        const successMessage = hasExistingDeployment 
           ? `배포가 성공적으로 교체되었습니다!\n이전 배포를 삭제하고 새 배포를 생성했습니다.\nService Entity ID: ${result.data?.id || 'N/A'}`
           : `배포가 성공적으로 완료되었습니다!\nService Entity ID: ${result.data?.id || 'N/A'}`;
         alert(successMessage);
@@ -460,7 +499,8 @@ export default function DeployPage() {
         // 성공 메시지가 포함된 경우에도 성공으로 처리
         const message = result.message || result.msg || "";
         if (message.includes("성공") || message.includes("success")) {
-          const successMessage = existingDeployment 
+          const hasExistingDeployment = existingStandardDeployment || existingCanaryDeployments.length > 0;
+          const successMessage = hasExistingDeployment 
             ? `배포가 성공적으로 교체되었습니다!\n이전 배포를 삭제하고 새 배포를 생성했습니다.\n메시지: ${message}`
             : `배포가 완료되었습니다!\n메시지: ${message}`;
           alert(successMessage);
@@ -491,39 +531,122 @@ export default function DeployPage() {
   };
 
   const handleDeploymentDelete = async (deployment: DeploymentEntity) => {
-    if (!confirm(`'${deployment.name}' 배포를 삭제하시겠습니까?`)) {
+    // 다크 릴리즈 연결 여부에 따른 안내 메시지
+    let confirmMessage = `'${deployment.name}' 일반 배포를 삭제하시겠습니까?\n\n`;
+    confirmMessage += `서비스: ${deployment.name}\n`;
+    confirmMessage += `네임스페이스: ${deployment.namespace}\n`;
+    confirmMessage += `버전: ${deployment.commitHash?.join(', ') || 'N/A'}\n\n`;
+    
+    if (deployment.darknessReleaseID) {
+      confirmMessage += `※ 이 서비스에 다크 릴리즈가 연결되어 있습니다.\n`;
+      confirmMessage += `일반 배포만 삭제되고 다른 배포는는 유지됩니다.`;
+    } else {
+      confirmMessage += `※ 연결된 다른 배포가 없으므로 서비스 전체가 삭제됩니다.`;
+    }
+    
+    if (!confirm(confirmMessage)) {
       return;
     }
 
     try {
-      console.log('배포 삭제 시도:', deployment);
+      console.log('일반 배포 삭제 시도:', deployment);
+      console.log('다크 릴리즈 연결 여부:', deployment.darknessReleaseID ? 'Y' : 'N');
       
-      const response = await fetch(`${crdApiUrl}/api/v1/crd/service/${deployment.id}`, {
-        method: 'DELETE',
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`배포 삭제 실패: ${response.status} - ${errorText}`);
-      }
-
-      const result = await response.json();
-      
-      if (result.success) {
-        alert('배포가 성공적으로 삭제되었습니다.');
-        console.log('배포 삭제 성공:', result);
+      // 다크 릴리즈가 연결되어 있는 경우와 없는 경우를 다르게 처리
+      if (deployment.darknessReleaseID) {
+        // 다크 릴리즈가 연결된 경우: ServiceEntity의 ratio를 0으로 변경하여 일반 배포 비활성화
+        console.log('🔄 다크 릴리즈가 연결되어 있음 - ServiceEntity 업데이트 모드');
         
-        // 배포 목록 새로고침
-        await fetchCurrentDeployments();
+        const updateData = {
+          name: deployment.name,
+          namespace: deployment.namespace,
+          serviceType: 'StandardType',
+          ratio: 0, // 일반 배포 비활성화
+          commitHash: deployment.commitHash
+        };
+        
+        const response = await fetch(`${crdApiUrl}/api/v1/crd/service/${deployment.id}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(updateData)
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`일반 배포 비활성화 실패: ${response.status} - ${errorText}`);
+        }
+
+        const result = await response.json();
+        console.log('일반 배포 비활성화 API 응답:', JSON.stringify(result, null, 2));
+        
+        // 성공 메시지 확인
+        const isSuccess = result.success === true || 
+                         result.success === "true" ||
+                         (result.message && result.message.includes("성공")) ||
+                         (result.msg && result.msg.includes("성공"));
+        
+        if (isSuccess || result.data) {
+          alert('일반 배포가 성공적으로 삭제되었습니다.\n다른 배포는는 그대로 유지됩니다.');
+          console.log('일반 배포 비활성화 성공:', result);
+        } else {
+          throw new Error(result.message || result.msg || '일반 배포 삭제 중 오류가 발생했습니다.');
+        }
+        
       } else {
-        throw new Error(result.message || '배포 삭제 중 오류가 발생했습니다.');
+        // 다크 릴리즈가 연결되지 않은 경우: ServiceEntity 전체 삭제
+        console.log('🗑️ 다크 릴리즈 미연결 - ServiceEntity 전체 삭제 모드');
+        
+        const response = await fetch(`${crdApiUrl}/api/v1/crd/service/${deployment.id}`, {
+          method: 'DELETE',
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`배포 삭제 실패: ${response.status} - ${errorText}`);
+        }
+
+        const result = await response.json();
+        console.log('배포 삭제 API 응답:', JSON.stringify(result, null, 2));
+        
+        // 성공 조건을 더 유연하게 처리
+        const isSuccess = result.success === true || 
+                         result.success === "true" ||
+                         (result.message && result.message.includes("삭제 성공")) ||
+                         (result.msg && result.msg.includes("삭제 성공"));
+        
+        if (isSuccess) {
+          alert('배포가 성공적으로 삭제되었습니다.');
+          console.log('배포 삭제 성공:', result);
+        } else {
+          // 메시지를 기반으로 한 번 더 성공 체크
+          const message = result.message || result.msg || "";
+          if (message.includes("성공") || message.includes("success")) {
+            alert(`배포가 삭제되었습니다.\n메시지: ${message}`);
+            console.log('배포 삭제 성공 (메시지 기반):', result);
+          } else {
+            throw new Error(message || '배포 삭제 중 오류가 발생했습니다.');
+          }
+        }
       }
-    } catch (error) {
-      console.error('배포 삭제 중 오류 발생:', error);
       
-      let errorMessage = '배포 삭제 중 오류가 발생했습니다.';
+      // 로컬 상태에서 먼저 삭제된 항목 제거
+      setCurrentDeployments(prevDeployments => 
+        prevDeployments.filter(dep => dep.id !== deployment.id)
+      );
+      
+      // 백엔드 처리 시간을 고려한 지연 후 목록 새로고침
+      setTimeout(async () => {
+        await fetchCurrentDeployments();
+      }, 1000);
+      
+    } catch (error) {
+      console.error('일반 배포 삭제 중 오류 발생:', error);
+      
+      let errorMessage = '일반 배포 삭제 중 오류가 발생했습니다.';
       if (error instanceof Error) {
-        errorMessage = `배포 삭제 실패: ${error.message}`;
+        errorMessage = `일반 배포 삭제 실패: ${error.message}`;
       }
       
       alert(errorMessage);
@@ -556,7 +679,7 @@ export default function DeployPage() {
 
           <Card className="max-w-2xl mx-auto">
             <CardHeader>
-              <CardTitle>Deploy</CardTitle>
+              <CardTitle>Standard Deploy</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
               {/* 클러스터 선택 */}

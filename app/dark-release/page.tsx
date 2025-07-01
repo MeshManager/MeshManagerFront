@@ -290,11 +290,15 @@ export default function DarkReleasePage() {
         const validEntities = details.filter(entity => entity !== null);
         console.log('✅ 유효한 ServiceEntity들:', validEntities);
         
-        // StandardType만 필터링하여 다크 릴리즈 배포 목록에 표시
-        const standardOnlyEntities = validEntities.filter(entity => entity.serviceType === 'StandardType');
-        console.log('🌑 StandardType만 필터링:', standardOnlyEntities);
+        // StandardType 중에서 DarknessRelease가 연결된 것만 다크 릴리즈 배포 목록에 표시
+        const darkReleaseEntities = validEntities.filter(entity => 
+          entity.serviceType === 'StandardType' && 
+          entity.darknessReleaseID != null && 
+          entity.darknessReleaseID !== undefined
+        );
+        console.log('🌑 DarknessRelease가 연결된 StandardType만 필터링:', darkReleaseEntities);
         
-        setCurrentDarkReleases(standardOnlyEntities as DarkReleaseDeployment[]);
+        setCurrentDarkReleases(darkReleaseEntities as DarkReleaseDeployment[]);
       } else {
         console.log('📭 다크 릴리즈 배포 목록이 비어있습니다.');
         setCurrentDarkReleases([]);
@@ -318,7 +322,8 @@ export default function DarkReleasePage() {
       `'${darkRelease.name}' 다크 릴리즈를 삭제하시겠습니까?\n\n` +
       `서비스: ${darkRelease.name}\n` +
       `네임스페이스: ${darkRelease.namespace}\n` +
-      `버전: ${darkRelease.commitHash?.join(', ') || 'N/A'}`
+      `버전: ${darkRelease.commitHash?.join(', ') || 'N/A'}\n\n` +
+      `※ 다크 릴리즈만 삭제되고 다른른 배포는 유지됩니다.`
     );
     
     if (!confirmation) {
@@ -326,17 +331,23 @@ export default function DarkReleasePage() {
     }
 
     try {
-      console.log(`🗑️ StandardType ServiceEntity 삭제 시작: ID ${darkRelease.id}`);
+      console.log(`🗑️ DarknessRelease 삭제 시작: ServiceEntity ID ${darkRelease.id}`);
       console.log(`📋 삭제 대상 정보:`, darkRelease);
 
-      const deleteResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${darkRelease.id}`, {
+      // DarknessRelease ID가 있는 경우에만 삭제 진행
+      if (!darkRelease.darknessReleaseID) {
+        throw new Error('DarknessRelease ID를 찾을 수 없습니다. 이미 삭제되었거나 다크 릴리즈 상태가 아닐 수 있습니다.');
+      }
+
+      // ServiceEntity를 삭제하는 대신 DarknessRelease만 삭제
+      const deleteResponse = await fetch(`${crdApiUrl}/api/v1/crd/darkness/${darkRelease.darknessReleaseID}`, {
         method: 'DELETE',
       });
 
-      console.log(`📡 삭제 응답 상태: ${deleteResponse.status} ${deleteResponse.statusText}`);
+      console.log(`📡 DarknessRelease 삭제 응답 상태: ${deleteResponse.status} ${deleteResponse.statusText}`);
 
       if (!deleteResponse.ok) {
-        let errorMessage = `삭제 실패! status: ${deleteResponse.status}`;
+        let errorMessage = `다크 릴리즈 삭제 실패! status: ${deleteResponse.status}`;
         
         try {
           const errorText = await deleteResponse.text();
@@ -344,25 +355,25 @@ export default function DarkReleasePage() {
           
           if (deleteResponse.status === 500) {
             errorMessage = `서버 내부 오류가 발생했습니다.\n\n` +
-                          `이는 백엔드에서 삭제 처리 중 문제가 발생한 것입니다.\n` +
+                          `이는 백엔드에서 다크 릴리즈 삭제 처리 중 문제가 발생한 것입니다.\n` +
                           `관리자에게 문의하거나 잠시 후 다시 시도해주세요.\n\n` +
                           `상세 오류: ${errorText}`;
           } else if (deleteResponse.status === 404) {
-            errorMessage = `삭제하려는 ServiceEntity를 찾을 수 없습니다.\n` +
-                          `이미 삭제되었거나 존재하지 않는 배포일 수 있습니다.`;
+            errorMessage = `삭제하려는 DarknessRelease를 찾을 수 없습니다.\n` +
+                          `이미 삭제되었거나 존재하지 않는 다크 릴리즈일 수 있습니다.`;
           } else {
-            errorMessage = `삭제 실패: ${errorText}`;
+            errorMessage = `다크 릴리즈 삭제 실패: ${errorText}`;
           }
         } catch (parseError) {
           console.error(`❌ 에러 응답 파싱 실패:`, parseError);
-          errorMessage = `삭제 실패! HTTP ${deleteResponse.status}`;
+          errorMessage = `다크 릴리즈 삭제 실패! HTTP ${deleteResponse.status}`;
         }
 
         throw new Error(errorMessage);
       }
 
-      console.log(`✅ StandardType ServiceEntity ${darkRelease.id} 삭제 성공`);
-      alert(`다크 릴리즈 '${darkRelease.name}'이(가) 성공적으로 삭제되었습니다.`);
+      console.log(`✅ DarknessRelease ${darkRelease.darknessReleaseID} 삭제 성공`);
+      alert(`다크 릴리즈 '${darkRelease.name}'이(가) 성공적으로 삭제되었습니다.\n다른 배포는 그대로 유지됩니다.`);
       
       // 목록 새로고침 (지연 추가)
       setTimeout(() => {
@@ -387,6 +398,67 @@ export default function DarkReleasePage() {
       return;
     }
 
+    // 기존 Standard 또는 Canary 배포 존재 여부 검증
+    console.log('🔍 기존 배포 상태 검증 시작...');
+    let hasStandardDeployment = false;
+    let hasCanaryDeployment = false;
+
+    try {
+      const existingListResponse = await fetch(`${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/list`);
+      if (existingListResponse.ok) {
+        const existingListResult = await existingListResponse.json();
+        const serviceEntityIDs = existingListResult?.result?.serviceEntityID || existingListResult?.data?.serviceEntityID || [];
+        
+        if (Array.isArray(serviceEntityIDs) && serviceEntityIDs.length > 0) {
+          const entityCheckPromises = serviceEntityIDs.map(async (entityId: number) => {
+            try {
+              const entityResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${entityId}`);
+              if (entityResponse.ok) {
+                const entityResult = await entityResponse.json();
+                const entityData = entityResult?.result || entityResult?.data;
+                
+                if (entityData && 
+                    entityData.name === selectedService && 
+                    entityData.namespace === selectedNamespace) {
+                  
+                  if (entityData.serviceType === 'StandardType' && entityData.ratio > 0) {
+                    console.log(`✅ 활성화된 StandardType 배포 발견: ID ${entityId}`);
+                    return { type: 'StandardType', active: true };
+                  } else if ((entityData.serviceType === 'CanaryType' || entityData.serviceType === 'StickyCanaryType') && entityData.ratio > 0) {
+                    console.log(`🚀 활성화된 Canary 배포 발견: ID ${entityId}, Type: ${entityData.serviceType}`);
+                    return { type: 'CanaryType', active: true };
+                  }
+                }
+              }
+            } catch (error) {
+              console.error(`❌ Entity ${entityId} 조회 실패:`, error);
+            }
+            return null;
+          });
+          
+          const foundEntities = (await Promise.all(entityCheckPromises)).filter(entity => entity !== null);
+          hasStandardDeployment = foundEntities.some(entity => entity.type === 'StandardType' && entity.active);
+          hasCanaryDeployment = foundEntities.some(entity => entity.type === 'CanaryType' && entity.active);
+        }
+      }
+    } catch (error) {
+      console.error('❌ 기존 배포 상태 검증 중 오류:', error);
+    }
+
+    // 기존 배포가 없으면 Dark Release 배포 차단
+    if (!hasStandardDeployment && !hasCanaryDeployment) {
+      alert(
+        "Dark Release를 배포하기 전에 먼저 Standard Deploy 또는 Canary Deploy 중 하나를 배포해야 합니다.\n\n" +
+        "다음 중 하나를 먼저 진행해주세요:\n" +
+        "1. Deploy 페이지에서 Standard 배포 진행\n" +
+        "2. Canary Deploy 페이지에서 Canary 배포 진행\n\n" +
+        "기존 배포가 있어야 Dark Release를 추가로 배포할 수 있습니다."
+      );
+      return;
+    }
+
+    console.log(`✅ 기존 배포 확인 완료 - Standard: ${hasStandardDeployment}, Canary: ${hasCanaryDeployment}`);
+
     try {
       const crdApiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL_CRD || 'http://localhost:8084';
       
@@ -394,7 +466,6 @@ export default function DarkReleasePage() {
       console.log('🔍 1단계: 기존 ServiceEntity 및 DarknessRelease 확인...');
       let existingServiceEntityId = null;
       let existingDarknessReleaseId = null;
-      let hasCanaryDeployment = false;
       
       try {
         const existingListResponse = await fetch(`${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/list`);
@@ -454,7 +525,6 @@ export default function DarkReleasePage() {
             }
             
             if (canaryEntity) {
-              hasCanaryDeployment = true;
               console.log(`🚀 Canary 배포 감지: ID ${canaryEntity.id} (독립적으로 유지)`);
             }
           }
@@ -484,56 +554,71 @@ export default function DarkReleasePage() {
         }
       }
 
-      // 3단계: ServiceEntity 생성 또는 기존 StandardType 재사용
-      let serviceEntityId = existingServiceEntityId;
+      // 3단계: 기존 배포의 ServiceEntity ID 활용 (일반배포 자동생성 방지)
+      let serviceEntityId = null;
       
+      // 3-1단계: 기존 StandardType 또는 CanaryType ServiceEntity 찾기
+      try {
+        const existingListResponse = await fetch(`${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/list`);
+        if (existingListResponse.ok) {
+          const existingListResult = await existingListResponse.json();
+          const serviceEntityIDs = existingListResult?.result?.serviceEntityID || existingListResult?.data?.serviceEntityID || [];
+          
+          if (Array.isArray(serviceEntityIDs) && serviceEntityIDs.length > 0) {
+            const entityCheckPromises = serviceEntityIDs.map(async (entityId: number) => {
+              try {
+                const entityResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${entityId}`);
+                if (entityResponse.ok) {
+                  const entityResult = await entityResponse.json();
+                  const entityData = entityResult?.result || entityResult?.data;
+                  
+                  if (entityData && 
+                      entityData.name === selectedService && 
+                      entityData.namespace === selectedNamespace) {
+                    
+                    if (entityData.serviceType === 'StandardType') {
+                      console.log(`✅ 기존 StandardType ServiceEntity 발견: ID ${entityId} (재사용)`);
+                      return { id: entityId, type: 'StandardType', data: entityData };
+                    } else if (entityData.serviceType === 'CanaryType' || entityData.serviceType === 'StickyCanaryType') {
+                      console.log(`🚀 기존 ${entityData.serviceType} ServiceEntity 발견: ID ${entityId} (다크릴리즈용 재사용)`);
+                      return { id: entityId, type: 'CanaryType', data: entityData };
+                    }
+                  }
+                }
+              } catch (error) {
+                console.error(`❌ Entity ${entityId} 조회 실패:`, error);
+              }
+              return null;
+            });
+            
+            const foundEntities = (await Promise.all(entityCheckPromises)).filter(entity => entity !== null);
+            
+            // 우선순위: StandardType > CanaryType 순으로 선택
+            const standardEntity = foundEntities.find(entity => entity.type === 'StandardType');
+            const canaryEntity = foundEntities.find(entity => entity.type === 'CanaryType');
+            
+            if (standardEntity) {
+              serviceEntityId = standardEntity.id;
+              console.log(`🔗 기존 StandardType ServiceEntity 재사용: ID ${serviceEntityId}`);
+            } else if (canaryEntity) {
+              serviceEntityId = canaryEntity.id;
+              console.log(`🔗 기존 CanaryType ServiceEntity를 다크릴리즈용으로 재사용: ID ${serviceEntityId}`);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('❌ 기존 ServiceEntity 찾기 중 오류:', error);
+      }
+      
+      // 3-2단계: 기존 ServiceEntity가 없으면 에러 (일반배포 자동생성 방지)
       if (!serviceEntityId) {
-        console.log('🆕 3단계: 새로운 StandardType ServiceEntity 생성...');
-        if (hasCanaryDeployment) {
-          console.log('🚀 CanaryType과 독립적으로 StandardType 생성');
-        }
-        
-        const serviceEntityData = {
-          name: selectedService,
-          namespace: selectedNamespace,
-          serviceType: 'StandardType',
-          ratio: 0,
-          commitHash: [selectedServiceVersion]
-        };
-        
-        console.log('ServiceEntity 요청 데이터:', serviceEntityData);
-
-        const serviceEntityResponse = await fetch(`${crdApiUrl}/api/v1/crd/${selectedClusterUuid}/serviceEntity`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(serviceEntityData),
-        });
-
-        if (!serviceEntityResponse.ok) {
-          const errorText = await serviceEntityResponse.text();
-          console.error('ServiceEntity 에러 응답:', errorText);
-          throw new Error(`ServiceEntity 생성 실패! status: ${serviceEntityResponse.status}, 응답: ${errorText}`);
-        }
-
-        const serviceEntityResult = await serviceEntityResponse.json();
-        console.log('ServiceEntity 응답 전체:', JSON.stringify(serviceEntityResult, null, 2));
-        
-        if (!serviceEntityResult.result || !serviceEntityResult.code) {
-          throw new Error(serviceEntityResult.message || 'ServiceEntity 생성에 실패했습니다.');
-        }
-
-        // ID 추출
-        serviceEntityId = serviceEntityResult.result.ID || serviceEntityResult.result.id || serviceEntityResult.data?.ID || serviceEntityResult.data?.id;
-        console.log('생성된 ServiceEntity ID:', serviceEntityId);
-        
-        if (!serviceEntityId) {
-          console.error('ID 추출 실패. result 구조:', serviceEntityResult.result || serviceEntityResult.data);
-          throw new Error('ServiceEntity ID를 받아오지 못했습니다.');
-        }
-      } else {
-        console.log(`🔗 기존 StandardType ServiceEntity 재사용: ID ${serviceEntityId}`);
+        throw new Error(
+          '다크릴리즈를 생성하려면 먼저 StandardType 또는 CanaryType 배포가 있어야 합니다.\n\n' +
+          '다음 중 하나를 먼저 진행해주세요:\n' +
+          '1. Standard Deploy 페이지에서 일반 배포 진행\n' +
+          '2. Canary Deploy 페이지에서 카나리 배포 진행\n\n' +
+          '기존 배포의 ServiceEntity를 활용하여 다크릴리즈를 생성합니다.'
+        );
       }
 
       // 4단계: POST - 새로운 DarknessRelease 생성
@@ -563,15 +648,14 @@ export default function DarkReleasePage() {
       const darknessResult = await darknessResponse.json();
       
       if (darknessResult.result && darknessResult.code) {
-        const isNewServiceEntity = !existingServiceEntityId;
         alert(`다크 릴리스가 성공적으로 생성되었습니다!\n` +
-              `ServiceEntity ID: ${serviceEntityId} ${isNewServiceEntity ? '(새로 생성됨)' : '(기존 재사용)'}\n` +
+              `ServiceEntity ID: ${serviceEntityId} (기존 배포의 ServiceEntity 재사용)\n` +
               `서비스: ${selectedService}\n` +
               `네임스페이스: ${selectedNamespace}\n` +
               `버전: ${selectedServiceVersion}\n` +
               `IP: ${ipAddress}\n` +
               `${existingDarknessReleaseId ? '(기존 DarknessRelease 삭제 후 새로 생성됨)' : '(새로 생성됨)'}\n` +
-              `${hasCanaryDeployment ? '🚀 Canary 배포와 독립적으로 공존' : ''}`);
+              `\n✅ 기존 배포와 연동하여 다크릴리즈가 생성되었습니다.`);
         
         // 성공 후 폼 초기화
         setSelectedService(null);
@@ -618,6 +702,14 @@ export default function DarkReleasePage() {
           <Card className="max-w-4xl mx-auto">
             <CardHeader>
               <CardTitle>Dark Release</CardTitle>
+              <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                <p className="text-sm text-blue-800">
+                  <strong>📋 사전 요구사항:</strong> Dark Release를 배포하기 전에 먼저 <strong>Standard Deploy</strong> 또는 <strong>Canary Deploy</strong> 중 하나가 배포되어 있어야 합니다.
+                </p>
+                <p className="text-xs text-blue-600 mt-1">
+                  기존 배포가 없는 경우, Deploy 페이지 또는 Canary Deploy 페이지에서 먼저 배포를 진행해주세요.
+                </p>
+              </div>
             </CardHeader>
             <CardContent className="grid gap-4">
               {/* 클러스터 선택 드롭다운 */}

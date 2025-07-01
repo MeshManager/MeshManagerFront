@@ -56,6 +56,7 @@ interface CanaryDeployment {
   serviceType: string;
   ratio: number;
   commitHash: string[];
+  podScale?: boolean;
   ratioSchedules?: {triggerTime?: number; delayMs?: number; newRatio: number}[];
   darknessReleaseID?: number;
   dependencyID?: number[];
@@ -93,6 +94,7 @@ export default function CanaryDeployPage() {
   const [canaryVersion, setCanaryVersion] = useState<string | null>(null);
   const [canaryRatio, setCanaryRatio] = useState<number[]>([10]); // Default to 10%
   const [stickySession, setStickySession] = useState<boolean>(false);
+  const [podScaleEnabled, setPodScaleEnabled] = useState<boolean>(false);
   const [deployments, setDeployments] = useState<DeploymentInfo[]>([]);
   const [currentCanaryDeployments, setCurrentCanaryDeployments] = useState<CanaryDeployment[]>([]);
   
@@ -311,10 +313,20 @@ export default function CanaryDeployPage() {
                     
                     if (entityData.serviceType === 'CanaryType' || entityData.serviceType === 'StickyCanaryType') {
                       console.log(`🚀 기존 ${entityData.serviceType} ServiceEntity 발견: ID ${entityId} (삭제 후 새로 생성 예정)`, entityData);
-                      return { id: entityId, type: entityData.serviceType };
+                      return { 
+                        id: entityId, 
+                        type: entityData.serviceType,
+                        commitHash: entityData.commitHash,
+                        darknessReleaseID: entityData.darknessReleaseID
+                      };
                     } else if (entityData.serviceType === 'StandardType') {
                       console.log(`🌑 기존 StandardType ServiceEntity 발견: ID ${entityId} (Dark Release용, 건드리지 않음)`, entityData);
-                      return { id: entityId, type: 'StandardType' };
+                      return { 
+                        id: entityId, 
+                        type: 'StandardType',
+                        commitHash: entityData.commitHash,
+                        darknessReleaseID: entityData.darknessReleaseID
+                      };
                     }
                   }
                 }
@@ -339,7 +351,57 @@ export default function CanaryDeployPage() {
             
             if (standardEntities.length > 0) {
               hasStandardDeployment = true;
-              console.log(`🌑 StandardType ServiceEntity 감지: ${standardEntities.length}개 (독립적으로 유지)`);
+              console.log(`🌑 StandardType ServiceEntity 감지: ${standardEntities.length}개`);
+              
+              // StandardType이 DarkRelease가 아닌 일반 배포인 경우 삭제 확인
+              const standardDeploymentsToDelete = standardEntities.filter(entity => 
+                !entity.darknessReleaseID || entity.darknessReleaseID === null
+              );
+              
+              if (standardDeploymentsToDelete.length > 0) {
+                const confirmDeleteStandard = confirm(
+                  `'${selectedService}' 서비스에 일반 배포가 존재합니다.\n` +
+                  `카나리 배포를 진행하기 위해 기존 일반 배포를 삭제하시겠습니까?\n\n` +
+                  `삭제할 일반 배포:\n` +
+                  standardDeploymentsToDelete.map(standard => 
+                    `- StandardType (버전: ${standard.commitHash?.join(', ') || 'N/A'})`
+                  ).join('\n') +
+                  `\n\n※ 다크릴리즈가 연결된 배포는 유지됩니다.`
+                );
+                
+                if (!confirmDeleteStandard) {
+                  throw new Error('사용자가 일반 배포 삭제를 취소했습니다.');
+                }
+                
+                console.log(`🗑️ ${standardDeploymentsToDelete.length}개의 일반 배포 삭제 진행`);
+                
+                for (const standardDeployment of standardDeploymentsToDelete) {
+                  try {
+                    console.log(`🗑️ 일반 배포 삭제 시도: ID ${standardDeployment.id}`);
+                    const deleteResponse = await fetch(`${crdApiUrl}/api/v1/crd/service/${standardDeployment.id}`, {
+                      method: 'DELETE',
+                    });
+
+                    if (!deleteResponse.ok) {
+                      const errorText = await deleteResponse.text();
+                      console.error(`❌ 일반 배포 ${standardDeployment.id} 삭제 실패:`, errorText);
+                      throw new Error(`일반 배포 삭제 실패: ${deleteResponse.status} - ${errorText}`);
+                    }
+
+                    const deleteResult = await deleteResponse.json();
+                    console.log(`✅ 일반 배포 ${standardDeployment.id} 삭제 완료:`, deleteResult);
+                  } catch (error) {
+                    console.error(`❌ 일반 배포 ${standardDeployment.id} 삭제 중 오류:`, error);
+                    throw error;
+                  }
+                }
+                
+                // 일반 배포 삭제 후 대기
+                console.log('⏳ 일반 배포 삭제 완료 후 대기 중...');
+                await new Promise(resolve => setTimeout(resolve, 1500));
+              } else {
+                console.log(`🌑 모든 StandardType이 DarkRelease 연결됨 - 유지`);
+              }
             }
           }
         } else {
@@ -394,6 +456,7 @@ export default function CanaryDeployPage() {
         serviceType: stickySession ? "StickyCanaryType" : "CanaryType",
         ratio: canaryRatio[0],
         commitHash: [originalVersion, canaryVersion],
+        podScale: podScaleEnabled,
         // delayMs를 triggerTime(절대시간)으로 변환
         ratioSchedules: enableSchedule ? ratioSchedules.map(schedule => ({
           delayMs: schedule.delayMs, // 백엔드 요청 DTO에서는 delayMs 사용
@@ -472,10 +535,19 @@ export default function CanaryDeployPage() {
   };
 
   const handleAgentDelete = async (canaryDeployment: CanaryDeployment) => {
-    const confirmed = confirm(`${canaryDeployment.name} 서비스의 카나리 배포를 삭제하시겠습니까?`);
+    const confirmMessage = `'${canaryDeployment.name}' 카나리 배포를 삭제하시겠습니까?\n\n` +
+      `서비스: ${canaryDeployment.name}\n` +
+      `네임스페이스: ${canaryDeployment.namespace}\n` +
+      `현재 비율: ${canaryDeployment.ratio}%\n` +
+      `버전: ${canaryDeployment.commitHash?.join(', ') || 'N/A'}\n\n` +
+      `※ 카나리 배포만 삭제되고 다른 배포는 영향받지 않습니다.`;
+    
+    const confirmed = confirm(confirmMessage);
     if (!confirmed) return;
 
     try {
+      console.log('🗑️ 카나리 배포 삭제 시도:', canaryDeployment);
+      
       const response = await fetch(`${crdApiUrl}/api/v1/crd/service/${canaryDeployment.id}`, {
         method: 'DELETE',
         headers: {
@@ -484,18 +556,47 @@ export default function CanaryDeployPage() {
       });
 
       if (!response.ok) {
-        throw new Error(`삭제 요청 실패: ${response.status} ${response.statusText}`);
+        const errorText = await response.text();
+        throw new Error(`카나리 배포 삭제 실패: ${response.status} - ${errorText}`);
       }
 
-      console.log('✅ 삭제 성공');
-      alert("카나리 배포가 성공적으로 삭제되었습니다!");
+      const result = await response.json();
+      console.log('카나리 배포 삭제 API 응답:', JSON.stringify(result, null, 2));
+      
+      // 성공 조건을 더 유연하게 처리
+      const isSuccess = result.success === true || 
+                       result.success === "true" ||
+                       (result.message && result.message.includes("삭제 성공")) ||
+                       (result.msg && result.msg.includes("삭제 성공"));
+      
+      if (isSuccess) {
+        console.log('✅ 카나리 배포 삭제 성공:', result);
+        alert("카나리 배포가 성공적으로 삭제되었습니다!\n다른른 배포는 그대로 유지됩니다.");
+      } else {
+        // 메시지를 기반으로 한 번 더 성공 체크
+        const message = result.message || result.msg || "";
+        if (message.includes("성공") || message.includes("success")) {
+          console.log('✅ 카나리 배포 삭제 성공 (메시지 기반):', result);
+          alert(`카나리 배포가 삭제되었습니다!\n메시지: ${message}\n다른른 배포는 그대로 유지됩니다.`);
+        } else {
+          throw new Error(message || '카나리 배포 삭제 중 오류가 발생했습니다.');
+        }
+      }
       
       // 삭제 후 목록 새로고침
-      await fetchCurrentCanaryDeployments();
+      setTimeout(async () => {
+        await fetchCurrentCanaryDeployments();
+      }, 1000);
       
     } catch (error) {
-      console.error("❌ 삭제 중 오류 발생:", error);
-      alert(`삭제 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+      console.error("❌ 카나리 배포 삭제 중 오류 발생:", error);
+      
+      let errorMessage = '카나리 배포 삭제 중 오류가 발생했습니다.';
+      if (error instanceof Error) {
+        errorMessage = `카나리 배포 삭제 실패: ${error.message}`;
+      }
+      
+      alert(errorMessage);
     }
   };
 
@@ -803,13 +904,24 @@ export default function CanaryDeployPage() {
                 </div>
               </div>
 
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id="sticky-session"
-                  checked={stickySession}
-                  onCheckedChange={setStickySession}
-                />
-                <UiLabel htmlFor="sticky-session">Sticky Session 활성화</UiLabel>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="sticky-session"
+                    checked={stickySession}
+                    onCheckedChange={setStickySession}
+                  />
+                  <UiLabel htmlFor="sticky-session">Sticky Session 활성화</UiLabel>
+                </div>
+                
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="pod-scale"
+                    checked={podScaleEnabled}
+                    onCheckedChange={setPodScaleEnabled}
+                  />
+                  <UiLabel htmlFor="pod-scale">비율에 따른 파드 수 조정</UiLabel>
+                </div>
               </div>
 
               {/* RatioSchedule 설정 섹션 */}
@@ -980,6 +1092,7 @@ export default function CanaryDeployPage() {
                         <p><strong>네임스페이스:</strong> {currentServiceCanaryDeployment.namespace}</p>
                         <p><strong>버전:</strong> {currentServiceCanaryDeployment.commitHash?.join(' → ') || 'N/A'}</p>
                         <p><strong>타입:</strong> {currentServiceCanaryDeployment.serviceType}</p>
+                        <p><strong>파드 스케일:</strong> {currentServiceCanaryDeployment.podScale ? '활성화' : '비활성화'}</p>
                       </div>
 
                       {/* 스케줄 정보 표시 - 항상 표시 */}
@@ -1139,6 +1252,9 @@ export default function CanaryDeployPage() {
                           </p>
                           <p className="text-sm text-gray-600 mb-1">
                             트래픽 비율: {canaryDeployment.ratio}%
+                          </p>
+                          <p className="text-sm text-gray-600 mb-1">
+                            파드 스케일: {canaryDeployment.podScale ? '활성화' : '비활성화'}
                           </p>
                           <p className="text-sm text-gray-600 mb-2">
                             버전: {canaryDeployment.commitHash ? canaryDeployment.commitHash.join(', ') : 'N/A'}

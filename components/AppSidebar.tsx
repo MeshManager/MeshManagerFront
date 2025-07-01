@@ -26,7 +26,7 @@ const menuItems = [
     authRequired: false,
   },
   {
-    title: "Deploy",
+    title: "Standard Deploy",
     url: "/deploy",
     icon: Rocket,
     authRequired: true,
@@ -44,7 +44,7 @@ const menuItems = [
     authRequired: true,
   },
   {
-    title: "Settings",
+    title: "About",
     url: "/settings",
     icon: Settings,
     authRequired: true,
