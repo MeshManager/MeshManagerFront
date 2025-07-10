@@ -531,7 +531,7 @@ export default function DeployPage() {
   };
 
   const handleDeploymentDelete = async (deployment: DeploymentEntity) => {
-    // 다크 릴리즈 연결 여부에 따른 안내 메시지
+    // 확인 메시지
     let confirmMessage = `'${deployment.name}' 일반 배포를 삭제하시겠습니까?\n\n`;
     confirmMessage += `서비스: ${deployment.name}\n`;
     confirmMessage += `네임스페이스: ${deployment.namespace}\n`;
@@ -539,9 +539,9 @@ export default function DeployPage() {
     
     if (deployment.darknessReleaseID) {
       confirmMessage += `※ 이 서비스에 다크 릴리즈가 연결되어 있습니다.\n`;
-      confirmMessage += `일반 배포만 삭제되고 다른 배포는는 유지됩니다.`;
+      confirmMessage += `ServiceEntity를 삭제하면 다크 릴리즈도 함께 삭제됩니다.`;
     } else {
-      confirmMessage += `※ 연결된 다른 배포가 없으므로 서비스 전체가 삭제됩니다.`;
+      confirmMessage += `※ 연결된 다른 배포가 없으므로 ServiceEntity가 완전히 삭제됩니다.`;
     }
     
     if (!confirm(confirmMessage)) {
@@ -552,82 +552,38 @@ export default function DeployPage() {
       console.log('일반 배포 삭제 시도:', deployment);
       console.log('다크 릴리즈 연결 여부:', deployment.darknessReleaseID ? 'Y' : 'N');
       
-      // 다크 릴리즈가 연결되어 있는 경우와 없는 경우를 다르게 처리
-      if (deployment.darknessReleaseID) {
-        // 다크 릴리즈가 연결된 경우: ServiceEntity의 ratio를 0으로 변경하여 일반 배포 비활성화
-        console.log('🔄 다크 릴리즈가 연결되어 있음 - ServiceEntity 업데이트 모드');
-        
-        const updateData = {
-          name: deployment.name,
-          namespace: deployment.namespace,
-          serviceType: 'StandardType',
-          ratio: 0, // 일반 배포 비활성화
-          commitHash: deployment.commitHash
-        };
-        
-        const response = await fetch(`${crdApiUrl}/api/v1/crd/service/${deployment.id}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(updateData)
-        });
+      // 백엔드에는 PUT API가 없으므로 모든 경우에 DELETE 사용
+      console.log('🗑️ ServiceEntity 삭제 모드');
+      
+      const response = await fetch(`${crdApiUrl}/api/v1/crd/service/${deployment.id}`, {
+        method: 'DELETE',
+      });
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`일반 배포 비활성화 실패: ${response.status} - ${errorText}`);
-        }
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`배포 삭제 실패: ${response.status} - ${errorText}`);
+      }
 
-        const result = await response.json();
-        console.log('일반 배포 비활성화 API 응답:', JSON.stringify(result, null, 2));
-        
-        // 성공 메시지 확인
-        const isSuccess = result.success === true || 
-                         result.success === "true" ||
-                         (result.message && result.message.includes("성공")) ||
-                         (result.msg && result.msg.includes("성공"));
-        
-        if (isSuccess || result.data) {
-          alert('일반 배포가 성공적으로 삭제되었습니다.\n다른 배포는는 그대로 유지됩니다.');
-          console.log('일반 배포 비활성화 성공:', result);
-        } else {
-          throw new Error(result.message || result.msg || '일반 배포 삭제 중 오류가 발생했습니다.');
-        }
-        
+      const result = await response.json();
+      console.log('배포 삭제 API 응답:', JSON.stringify(result, null, 2));
+      
+      // 성공 조건을 더 유연하게 처리
+      const isSuccess = result.success === true || 
+                       result.success === "true" ||
+                       (result.message && result.message.includes("삭제 성공")) ||
+                       (result.msg && result.msg.includes("삭제 성공"));
+      
+      if (isSuccess) {
+        alert('배포가 성공적으로 삭제되었습니다.');
+        console.log('배포 삭제 성공:', result);
       } else {
-        // 다크 릴리즈가 연결되지 않은 경우: ServiceEntity 전체 삭제
-        console.log('🗑️ 다크 릴리즈 미연결 - ServiceEntity 전체 삭제 모드');
-        
-        const response = await fetch(`${crdApiUrl}/api/v1/crd/service/${deployment.id}`, {
-          method: 'DELETE',
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`배포 삭제 실패: ${response.status} - ${errorText}`);
-        }
-
-        const result = await response.json();
-        console.log('배포 삭제 API 응답:', JSON.stringify(result, null, 2));
-        
-        // 성공 조건을 더 유연하게 처리
-        const isSuccess = result.success === true || 
-                         result.success === "true" ||
-                         (result.message && result.message.includes("삭제 성공")) ||
-                         (result.msg && result.msg.includes("삭제 성공"));
-        
-        if (isSuccess) {
-          alert('배포가 성공적으로 삭제되었습니다.');
-          console.log('배포 삭제 성공:', result);
+        // 메시지를 기반으로 한 번 더 성공 체크
+        const message = result.message || result.msg || "";
+        if (message.includes("성공") || message.includes("success")) {
+          alert(`배포가 삭제되었습니다.\n메시지: ${message}`);
+          console.log('배포 삭제 성공 (메시지 기반):', result);
         } else {
-          // 메시지를 기반으로 한 번 더 성공 체크
-          const message = result.message || result.msg || "";
-          if (message.includes("성공") || message.includes("success")) {
-            alert(`배포가 삭제되었습니다.\n메시지: ${message}`);
-            console.log('배포 삭제 성공 (메시지 기반):', result);
-          } else {
-            throw new Error(message || '배포 삭제 중 오류가 발생했습니다.');
-          }
+          throw new Error(message || '배포 삭제 중 오류가 발생했습니다.');
         }
       }
       

@@ -56,7 +56,7 @@ interface CanaryDeployment {
   serviceType: string;
   ratio: number;
   commitHash: string[];
-  podScale?: boolean;
+  // podScale?: boolean; // 상용화 예정 없음 - 주석처리
   ratioSchedules?: {triggerTime?: number; delayMs?: number; newRatio: number}[];
   darknessReleaseID?: number;
   dependencyID?: number[];
@@ -94,7 +94,7 @@ export default function CanaryDeployPage() {
   const [canaryVersion, setCanaryVersion] = useState<string | null>(null);
   const [canaryRatio, setCanaryRatio] = useState<number[]>([10]); // Default to 10%
   const [stickySession, setStickySession] = useState<boolean>(false);
-  const [podScaleEnabled, setPodScaleEnabled] = useState<boolean>(false);
+  // const [podScaleEnabled, setPodScaleEnabled] = useState<boolean>(false); // 상용화 예정 없음 - 주석처리
   const [deployments, setDeployments] = useState<DeploymentInfo[]>([]);
   const [currentCanaryDeployments, setCurrentCanaryDeployments] = useState<CanaryDeployment[]>([]);
   
@@ -157,7 +157,11 @@ export default function CanaryDeployPage() {
                 return { id: entityId, ...entityData };
               }
             } else {
-              console.warn(`⚠️ Entity ${entityId} 조회 실패: ${entityResponse.status}`);
+              const errorText = await entityResponse.text().catch(() => 'Unknown Error');
+              console.warn(`⚠️ Entity ${entityId} 조회 실패: ${entityResponse.status} - ${errorText}`);
+              if (entityResponse.status === 500) {
+                console.error(`🚨 Entity ${entityId} 백엔드 내부 오류 (500): 해당 ServiceEntity가 손상되었거나 백엔드에서 처리 중 오류 발생`);
+              }
             }
           } catch (error) {
             console.error(`❌ Entity ${entityId} 조회 실패:`, error);
@@ -456,7 +460,7 @@ export default function CanaryDeployPage() {
         serviceType: stickySession ? "StickyCanaryType" : "CanaryType",
         ratio: canaryRatio[0],
         commitHash: [originalVersion, canaryVersion],
-        podScale: podScaleEnabled,
+        // podScale: podScaleEnabled, // 상용화 예정 없음 - 주석처리
         // delayMs를 triggerTime(절대시간)으로 변환
         ratioSchedules: enableSchedule ? ratioSchedules.map(schedule => ({
           delayMs: schedule.delayMs, // 백엔드 요청 DTO에서는 delayMs 사용
@@ -914,6 +918,7 @@ export default function CanaryDeployPage() {
                   <UiLabel htmlFor="sticky-session">Sticky Session 활성화</UiLabel>
                 </div>
                 
+                {/* 상용화 예정 없음 - 주석처리
                 <div className="flex items-center space-x-2">
                   <Switch
                     id="pod-scale"
@@ -922,6 +927,7 @@ export default function CanaryDeployPage() {
                   />
                   <UiLabel htmlFor="pod-scale">비율에 따른 파드 수 조정</UiLabel>
                 </div>
+                */}
               </div>
 
               {/* RatioSchedule 설정 섹션 */}
@@ -1092,7 +1098,7 @@ export default function CanaryDeployPage() {
                         <p><strong>네임스페이스:</strong> {currentServiceCanaryDeployment.namespace}</p>
                         <p><strong>버전:</strong> {currentServiceCanaryDeployment.commitHash?.join(' → ') || 'N/A'}</p>
                         <p><strong>타입:</strong> {currentServiceCanaryDeployment.serviceType}</p>
-                        <p><strong>파드 스케일:</strong> {currentServiceCanaryDeployment.podScale ? '활성화' : '비활성화'}</p>
+                        {/* <p><strong>파드 스케일:</strong> {currentServiceCanaryDeployment.podScale ? '활성화' : '비활성화'}</p> */} {/* 상용화 예정 없음 - 주석처리 */}
                       </div>
 
                       {/* 스케줄 정보 표시 - 항상 표시 */}
@@ -1253,9 +1259,9 @@ export default function CanaryDeployPage() {
                           <p className="text-sm text-gray-600 mb-1">
                             트래픽 비율: {canaryDeployment.ratio}%
                           </p>
-                          <p className="text-sm text-gray-600 mb-1">
+                          {/* <p className="text-sm text-gray-600 mb-1">
                             파드 스케일: {canaryDeployment.podScale ? '활성화' : '비활성화'}
-                          </p>
+                          </p> */} {/* 상용화 예정 없음 - 주석처리 */}
                           <p className="text-sm text-gray-600 mb-2">
                             버전: {canaryDeployment.commitHash ? canaryDeployment.commitHash.join(', ') : 'N/A'}
                           </p>

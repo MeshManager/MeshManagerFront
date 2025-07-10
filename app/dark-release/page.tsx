@@ -53,6 +53,7 @@ interface DarkReleaseDeployment {
   commitHash: string[];
   darknessReleaseID?: number;
   dependencyID?: number[];
+  ips?: string[]; // DarknessRelease의 IP 목록 추가
 }
 
 function SidebarToggleButton() {
@@ -290,15 +291,55 @@ export default function DarkReleasePage() {
         const validEntities = details.filter(entity => entity !== null);
         console.log('✅ 유효한 ServiceEntity들:', validEntities);
         
-        // StandardType 중에서 DarknessRelease가 연결된 것만 다크 릴리즈 배포 목록에 표시
-        const darkReleaseEntities = validEntities.filter(entity => 
-          entity.serviceType === 'StandardType' && 
+        // DarknessRelease가 연결된 ServiceEntity들을 찾아서 실제 DarknessRelease 정보 조회
+        const entitiesWithDarkRelease = validEntities.filter(entity => 
           entity.darknessReleaseID != null && 
           entity.darknessReleaseID !== undefined
         );
-        console.log('🌑 DarknessRelease가 연결된 StandardType만 필터링:', darkReleaseEntities);
+        console.log('🌑 DarknessRelease가 연결된 ServiceEntity들:', entitiesWithDarkRelease);
         
-        setCurrentDarkReleases(darkReleaseEntities as DarkReleaseDeployment[]);
+        if (entitiesWithDarkRelease.length > 0) {
+          // 각 ServiceEntity의 darknessReleaseID로 실제 DarknessRelease 정보 조회
+          const darkReleaseDetailsPromises = entitiesWithDarkRelease.map(async (entity) => {
+            try {
+              console.log(`🔍 DarknessRelease ${entity.darknessReleaseID} 상세 정보 조회...`);
+              const darkReleaseResponse = await fetch(`${crdApiUrl}/api/v1/crd/darkness/${entity.darknessReleaseID}`);
+              if (darkReleaseResponse.ok) {
+                const darkReleaseResult = await darkReleaseResponse.json();
+                console.log(`📄 DarknessRelease ${entity.darknessReleaseID} 응답:`, darkReleaseResult);
+                
+                const darkReleaseData = darkReleaseResult?.result || darkReleaseResult?.data;
+                if (darkReleaseData) {
+                  // DarknessRelease 정보와 ServiceEntity의 기본 정보 합성
+                  return {
+                    id: entity.id, // ServiceEntity ID (삭제 시 필요)
+                    name: entity.name, // ServiceEntity의 name, namespace 정보 사용
+                    namespace: entity.namespace,
+                    serviceType: `${entity.serviceType} + DarkRelease`, // 타입 표시 개선
+                    ratio: 0, // 다크 릴리즈는 일반 사용자 접근 차단
+                    commitHash: [darkReleaseData.commitHash], // DarknessRelease의 commitHash 사용
+                    darknessReleaseID: entity.darknessReleaseID,
+                    dependencyID: entity.dependencyID,
+                    ips: darkReleaseData.ips // DarknessRelease의 IP 정보 추가
+                  };
+                }
+              } else {
+                console.warn(`⚠️ DarknessRelease ${entity.darknessReleaseID} 조회 실패: ${darkReleaseResponse.status}`);
+              }
+            } catch (error) {
+              console.error(`❌ DarknessRelease ${entity.darknessReleaseID} 조회 실패:`, error);
+            }
+            return null;
+          });
+          
+          const darkReleaseDetails = await Promise.all(darkReleaseDetailsPromises);
+          const validDarkReleases = darkReleaseDetails.filter(release => release !== null);
+          console.log('✅ 유효한 DarknessRelease 정보들:', validDarkReleases);
+          
+          setCurrentDarkReleases(validDarkReleases as DarkReleaseDeployment[]);
+        } else {
+          setCurrentDarkReleases([]);
+        }
       } else {
         console.log('📭 다크 릴리즈 배포 목록이 비어있습니다.');
         setCurrentDarkReleases([]);
@@ -798,27 +839,32 @@ export default function DarkReleasePage() {
                   <h3 className="text-lg font-semibold">현재 다크 릴리즈 배포 목록</h3>
                   
                   {currentDarkReleases.map((darkRelease, index) => (
-                    <Card key={index} className="p-4 bg-purple-50">
+                    <Card key={index} className="p-4 bg-purple-50 border-purple-200">
                       <div className="flex justify-between items-start">
                         <div>
-                          <h4 className="font-medium mb-2">
-                            Service: {darkRelease.name} (ID: {darkRelease.id})
+                          <h4 className="font-medium mb-2 text-purple-800">
+                            🌑 Dark Release: {darkRelease.name} (ServiceEntity ID: {darkRelease.id})
                           </h4>
                           <p className="text-sm text-gray-600 mb-1">
                             네임스페이스: {darkRelease.namespace}
                           </p>
                           <p className="text-sm text-gray-600 mb-1">
-                            타입: {darkRelease.serviceType}
+                            기반 배포 타입: {darkRelease.serviceType}
                           </p>
                           <p className="text-sm text-gray-600 mb-1">
-                            비율: {darkRelease.ratio}% (일반 사용자 접근 차단)
+                            접근 제한: 일반 사용자 차단, 특정 IP만 허용
                           </p>
                           <p className="text-sm text-gray-600 mb-2">
-                            버전: {darkRelease.commitHash ? darkRelease.commitHash.join(', ') : 'N/A'}
+                            다크 릴리즈 버전: {darkRelease.commitHash ? darkRelease.commitHash.join(', ') : 'N/A'}
                           </p>
+                          {darkRelease.ips && darkRelease.ips.length > 0 && (
+                            <p className="text-sm text-purple-600 mb-2">
+                              🔐 허용된 IP: {darkRelease.ips.join(', ')}
+                            </p>
+                          )}
                           {darkRelease.darknessReleaseID && (
                             <p className="text-sm text-purple-600 mb-2">
-                              🌑 DarknessRelease ID: {darkRelease.darknessReleaseID}
+                              🆔 DarknessRelease ID: {darkRelease.darknessReleaseID}
                             </p>
                           )}
                         </div>
