@@ -148,7 +148,7 @@ function ClusterRegistrationPage() {
       console.log('클러스터 등록 성공:', result);
       
       // Agent 설치 명령어 형식 변경: make deploy 명령
-      const agentCommand = `wget https://www.meshmanagers.com/installAgent.sh && chmod 700 ./installAgent.sh && sudo apt update && sudo apt install -y dos2unix && sudo dos2unix installAgent.sh && ./installAgent.sh && cd ./MeshManagerAgent && make deploy IMG=public.ecr.aws/j8f1l6o6/mesh-agent:v4 UUID="${result.uuid}" AGENT_NAME="${clusterName}" AGENT_URL="https://www.meshmanagers.com/api/v1/agent" DESIRED_STATE_URL="https://www.meshmanagers.com/api/v1/crd" CLUSTER_MANAGEMENT_URL="https://www.meshmanagers.com/api/v1/management/clusters" SLACK_WEB_HOOK_URL="${prometheusUrl}"
+      const agentCommand = `wget https://www.meshmanagers.com/installAgent.sh && chmod 700 ./installAgent.sh && sudo apt update && sudo apt install -y dos2unix && sudo dos2unix installAgent.sh && ./installAgent.sh && cd ./MeshManagerAgent && make deploy IMG=public.ecr.aws/j8f1l6o6/mesh-agent:v23 UUID="${result.uuid}" AGENT_NAME="${clusterName}" AGENT_URL="https://www.meshmanagers.com/api/v1/agent" DESIRED_STATE_URL="https://www.meshmanagers.com/api/v1/yaml" CLUSTER_MANAGEMENT_URL="https://www.meshmanagers.com/api/v1/management/clusters" SLACK_WEB_HOOK_URL="${prometheusUrl}"
 `;
 
       setAgentInstallCommand(agentCommand);
